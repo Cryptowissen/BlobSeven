@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Free-Form Merge</title>
+    <style>
+        :root {
+            --bg-color: #bbada0;
+            --grid-color: #cdc1b4;
+            --tile-base-size: 80px;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden; /* Canvas style */
+            user-select: none;
+            position: relative;
+        }
+
+        h1 {
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            color: #eee4da;
+            margin: 0;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(238, 228, 218, 0.9);
+            padding: 15px;
+            border-radius: 5px;
+            max-width: 300px;
+            font-size: 14px;
+            z-index: 1000;
+            pointer-events: auto;
+        }
+
+        /* The Game Area */
+        #game-canvas {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        /* Spawn Points Visuals (Optional background grid) */
+        .spawn-grid {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: grid;
+            grid-template-columns: repeat(5, 100px); /* 5x5 */
+            grid-template-rows: repeat(5, 100px);
+            gap: 20px;
+            pointer-events: none; /* Just visual */
+            z-index: 0;
+        }
+
+        .spawn-point {
+            background-color: rgba(205, 193, 180, 0.5);
+            border-radius: 6px;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* TILES */
+        .tile {
+            position: absolute;
+            min-width: var(--tile-base-size);
+            min-height: var(--tile-base-size);
+            border-radius: 4px;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: bold;
+            font-size: 24px;
+            cursor: grab;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: transform 0.1s ease, background-color 0.2s;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+
+        .tile:active {
+            cursor: grabbing;
+        }
+
+        .tile.dragging {
+            z-index: 1000 !important;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.4);
+            transform: scale(1.1);
+            opacity: 0.7; /* Transparency as requested */
+            transition: none;
+        }
+
+        /* Pure Numbers */
+        .tile[data-val="1"] { background-color: #eee4da; color: #776e65; }
+        .tile[data-val="3"] { background-color: #ede0c8; color: #776e65; }
+        .tile[data-val="4"] { background-color: #f2b179; color: #f9f6f2; }
+        .tile[data-val="7"] { background-color: #f59563; color: #f9f6f2; }
+        .tile[data-val="14"] { background-color: #f67c5f; color: #f9f6f2; }
+        .tile[data-val="28"] { background-color: #f65e3b; color: #f9f6f2; }
+
+        /* Container Styles */
+        .tile.container {
+            background-color: #3e3933;
+            border: 3px solid #8f7a66;
+            padding: 15px;
+            display: flex; /* Ensure flex behavior */
+            flex-wrap: wrap;
+            align-content: center;
+            justify-content: center;
+            gap: 8px; /* Gap between items */
+            
+            /* Auto sizing based on content, but min size */
+            width: auto; 
+            height: auto;
+            min-width: 140px;
+            min-height: 140px;
+            max-width: none; /* Allow infinite growth */
+            z-index: 5;
+            transition: width 0.2s ease, height 0.2s ease; /* Smooth growth */
+        }
+
+        /* Nested Items Generic */
+        .tile .tile {
+            position: relative; /* Flow inside container */
+            margin: 0; /* Handled by gap */
+            transform: scale(1);
+            z-index: 10;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* Bouncy transition */
+        }
+
+        /* Nested PURE items */
+        .tile .tile.pure {
+            width: 60px; 
+            height: 60px;
+            font-size: 20px;
+        }
+
+        /* Nested CONTAINER items */
+        .tile .tile.container {
+            width: auto;
+            height: auto;
+            min-width: 120px;
+            min-height: 120px;
+            background-color: #2f2b26; 
+            border: 2px solid #776e65;
+            padding: 10px;
+        }
+        
+        /* HOVER / TARGET ANIMATIONS */
+        @keyframes targetPulse {
+            0% { transform: scale(1.05); box-shadow: 0 0 10px 4px rgba(255, 215, 0, 0.6); }
+            50% { transform: scale(1.12); box-shadow: 0 0 20px 8px rgba(255, 215, 0, 0.8); border-color: gold;}
+            100% { transform: scale(1.05); box-shadow: 0 0 10px 4px rgba(255, 215, 0, 0.6); }
+        }
+
+        .hover-target {
+            animation: targetPulse 1.5s infinite ease-in-out;
+            z-index: 50 !important;
+            border-color: gold !important;
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>Free-Form Merge</h1>
+    
+    <div id="game-canvas">
+        <div class="spawn-grid" id="spawn-grid">
+            <!-- 5x5 Grid generated JS -->
+        </div>
+        <!-- Tiles appended here -->
+    </div>
+
+    <div class="instructions">
+        <strong>Regeln:</strong><br>
+        - Frei bewegen.<br>
+        - Aufeinander werfen zum Mergen.<br>
+        - <strong>1+1 -> [1,1]</strong><br>
+        - <strong>[1,1]+1 -> 3</strong><br>
+        - <strong>3+4 -> 7</strong><br>
+        - Container wachsen automatisch.<br>
+    </div>
+
+<script>
+    // -- CONFIG --
+    const SPAWN_ROWS = 5;
+    const SPAWN_COLS = 5;
+    const TILE_SIZE = 80;
+    const GAP = 20;
+    const MAX_DEPTH = 2; // Maximum visual nesting depth
+
+    // -- STATE --
+    let tiles = []; // List of Root Tile Objects
+    let nextId = 1;
+    
+    // -- DOM --
+    const canvas = document.getElementById('game-canvas');
+    const spawnGrid = document.getElementById('spawn-grid');
+
+    // -- INIT --
+    function init() {
+        // Generate Spawn Grid Background
+        spawnGrid.innerHTML = '';
+        const startX = (window.innerWidth - (SPAWN_COLS * 100 + (SPAWN_COLS-1)*20)) / 2; // Approx centering
+        
+        for(let i=0; i<SPAWN_ROWS * SPAWN_COLS; i++) {
+            let div = document.createElement('div');
+            div.className = 'spawn-point';
+            spawnGrid.appendChild(div);
+        }
+
+        // Spawn Starters
+        spawnTile(1);
+        spawnTile(1);
+        spawnTile(1);
+        spawnTile(1);
+    }
+
+    // -- DATA MODEL --
+    class TileData {
+        constructor(type, valOrParts, x, y) {
+            this.id = nextId++;
+            this.type = type; // 'pure', 'container'
+            this.x = x || 100;
+            this.y = y || 100;
+            
+            if (type === 'pure') {
+                this.value = valOrParts;
+                this.parts = [];
+            } else {
+                this.value = null;
+                this.parts = valOrParts;
+            }
+        }
+    }
+
+    // -- LOGIC --
+
+    function spawnTile(val) {
+        // Find a free spawn point (visually)
+        // We use the spawn-grid DOM positions
+        const spawnPoints = document.querySelectorAll('.spawn-point');
+        let available = [];
+        
+        // Simple overlap check with existing tiles
+        // This is expensive if many tiles, but fine for 25 points.
+        spawnPoints.forEach((sp, idx) => {
+            let rect = sp.getBoundingClientRect();
+            // Check if any tile is "covering" this point
+            // We just check center point
+            let cx = rect.left + rect.width/2;
+            let cy = rect.top + rect.height/2;
+            
+            let covered = tiles.some(t => {
+                // If tile logic... actually we store x,y.
+                // Assuming Tile Size approx match.
+                let dist = Math.hypot(t.x - rect.left, t.y - rect.top);
+                return dist < 50; 
+            });
+            
+            if (!covered) available.push(rect);
+        });
+
+        if (available.length === 0 && tiles.length < 50) {
+            // Fallback: Random position
+            available.push({ left: Math.random()*(window.innerWidth-100), top: Math.random()*(window.innerHeight-100) });
+        }
+
+        if (available.length > 0) {
+            let spot = available[Math.floor(Math.random() * available.length)];
+            let t = new TileData('pure', val, spot.left, spot.top);
+            tiles.push(t);
+            renderTile(t); // Append to DOM
+        }
+    }
+
+    // -- INTERACTION (MOUSE DRAG) --
+
+    let dragItem = null; // { tileData, domEl, offsetX, offsetY, originalParent, originalIndex }
+    let isDragging = false;
+    let dragClone = null; // Visual clone if dragging out of container?
+    // Actually: If dragging from container, we remove it from container and make it a root tile immediately?
+    // Or we drag a ghost?
+    // User expectation: "steal" the item.
+    // Plan: On MouseDown on a nested item, remove it from data, promote to root tile at that position, start dragging it.
+
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    function handleMouseDown(e) {
+        let el = e.target.closest('.tile');
+        if (!el) return;
+        
+        e.preventDefault(); 
+
+        let id = parseInt(el.dataset.id);
+        let root = tiles.find(t => t.id === id);
+        
+        if (root) {
+            startDrag(root, el, e.clientX, e.clientY);
+        } else {
+            // Nested Item Drag
+            let parentInfo = findParentOf(id, tiles);
+            if (parentInfo) {
+                // 1. CAPTURE COORDINATES *BEFORE* MODIFYING DOM
+                let rect = el.getBoundingClientRect();
+                let canvasRect = canvas.getBoundingClientRect();
+
+                let item = parentInfo.item;
+                parentInfo.parent.parts.splice(parentInfo.index, 1);
+                
+                // Cleanup Parent
+                // STRICT MODE: When dragging OUT, do not auto-combine remaining junk.
+                simplifyContainer(parentInfo.parent, false);
+                
+                if (tiles.includes(parentInfo.parent) && parentInfo.parent.parts.length === 0 && parentInfo.parent.type === 'container') {
+                    tiles = tiles.filter(t => t !== parentInfo.parent);
+                    let parentEl = document.querySelector(`.tile[data-id="${parentInfo.parent.id}"]`);
+                    if(parentEl) parentEl.remove();
+                } else {
+                    let parentEl = document.querySelector(`.tile[data-id="${parentInfo.parent.id}"]`);
+                    if (parentEl) updateTileVisuals(parentEl, parentInfo.parent);
+                }
+
+                // Promote to Root
+                // Use captured rects
+                item.x = rect.left - canvasRect.left;
+                item.y = rect.top - canvasRect.top;
+                tiles.push(item);
+                
+                let newEl = renderTile(item);
+                startDrag(item, newEl, e.clientX, e.clientY);
+            }
+        }
+    }
+
+    function startDrag(tileObj, domEl, mx, my) {
+        isDragging = true;
+         // Calculate offset relative to TILE position (which is canvas relative)
+         // mx is screen, tileObj.x is canvas relative.
+         // We need offset = (ScreenMouse - CanvasScreenPos) - TileX
+         // Simplification:
+         // style.left = MouseScreenX - offsetX.
+         // We want style.left = tileObj.x.
+         // so offsetX = MouseScreenX - tileObj.x
+         // Wait, checking `handleMouseMove`: x = e.clientX - offsetX.
+         // if offsetX = mx - tileObj.x
+         // left = mx_new - (mx_start - start_x).
+         // left = start_x + (mx_new - mx_start).
+         // This assumes start_x is correct screen coord? NO.
+         
+         // If tileObj.x is CANVAS RELATIVE.
+         // And Mouse is SCREEN relative.
+         
+         // We need to normalize Mouse to Canvas too? 
+         // Or just treat offset as a delta?
+         
+         // Let's rely on map: 
+         // offsetX should be the dist from Mouse to Element TopLeft.
+         // In Rendered DOM, element left is relative to canvas.
+         // Screen Rect Left = CanvasRect.left + style.left.
+         // Mouse is at mx.
+         // offsetX = mx - (CanvasRect.left + style.left).
+         
+         let canvasRect = canvas.getBoundingClientRect();
+         let tileScreenLeft = canvasRect.left + tileObj.x;
+         let tileScreenTop = canvasRect.top + tileObj.y;
+         
+         dragItem = {
+            tile: tileObj,
+            el: domEl,
+            // This assumes 'mx' is comparible to 'x'. It is NOT if x is relative!
+            // Correct way for relative drag:
+            // We want to calculate new x/y. 
+            // x = (Mouse - CanvasLeft) - (MouseInsideTileOffset)
+            
+            // Re-calc mouse offset inside tile
+            mouseInsideX: mx - tileScreenLeft,
+            mouseInsideY: my - tileScreenTop
+        };
+        
+        domEl.classList.add('dragging');
+        domEl.style.zIndex = 999;
+    }
+
+    function handleMouseMove(e) {
+        if (!isDragging || !dragItem) return;
+
+        // Calc new Canvas Relative pos
+        let canvasRect = canvas.getBoundingClientRect();
+        let relX = e.clientX - canvasRect.left;
+        let relY = e.clientY - canvasRect.top;
+        
+        let x = relX - dragItem.mouseInsideX;
+        let y = relY - dragItem.mouseInsideY;
+        
+        // Update Model
+        dragItem.tile.x = x;
+        dragItem.tile.y = y;
+        
+        // Update Visual
+        dragItem.el.style.left = x + 'px';
+        dragItem.el.style.top = y + 'px';
+
+        // Hit Test Visuals
+        dragItem.el.style.display = 'none';
+        let elBelow = document.elementFromPoint(e.clientX, e.clientY);
+        dragItem.el.style.display = '';
+
+        document.querySelectorAll('.hover-target').forEach(el => el.classList.remove('hover-target'));
+
+        if (elBelow) {
+            let targetTileEl = elBelow.closest('.tile');
+            if (targetTileEl && targetTileEl !== dragItem.el) {
+                targetTileEl.classList.add('hover-target');
+            }
+        }
+    }
+
+    function handleMouseUp(e) {
+        if (!isDragging || !dragItem) return;
+
+        isDragging = false;
+        dragItem.el.classList.remove('dragging');
+        dragItem.el.style.zIndex = '';
+        document.querySelectorAll('.hover-target').forEach(el => el.classList.remove('hover-target'));
+
+        // Use Mouse Position for Merge Check
+        checkMerge(dragItem.tile, dragItem.el, e.clientX, e.clientY);
+        
+        dragItem = null;
+    }
+
+    function checkMerge(sourceTile, sourceEl, mx, my) {
+        // Find overlap using Mouse Position (most intuitive for "Aiming")
+        
+        sourceEl.style.display = 'none';
+        let elementBelow = document.elementFromPoint(mx, my);
+        sourceEl.style.display = '';
+
+        if (!elementBelow) return;
+
+        let targetEl = elementBelow.closest('.tile');
+        
+        // Ensure we didn't hit ourself (handled by display:none)
+        // Ensure we hit a valid tile
+        if (targetEl) {
+             let tid = parseInt(targetEl.dataset.id);
+             // Verify it is NOT the source tile (just in case)
+             if (tid !== sourceTile.id) {
+                 // We hit a DOM Element .tile. 
+                 // It could be a Root or a Nested Tile.
+                 // We need to find the ROOT that owns this element to pass to performMerge
+                 // performMerge logic expects the Root Target, and then re-finds the specific sub-element.
+                 // Let's optimize: performMerge can take the specific element we hit.
+                 
+                 // Find Root of targetEl
+                 // We can traverse up DOM or lookup in `tiles`.
+                 // Note: nested tiles don't have IDs in `tiles` array, only Roots do.
+                 // But wait, `renderTile` assigns data-id to all tiles.
+                 // So we can find the root by traversing up DOM until we find one in `tiles`.
+                 
+                 let ptr = targetEl;
+                 let rootTileData = null;
+                 
+                 while(ptr && !rootTileData) {
+                     if (ptr.classList.contains('tile')) {
+                         let id = parseInt(ptr.dataset.id);
+                         rootTileData = tiles.find(t => t.id === id);
+                     }
+                     if (!rootTileData) ptr = ptr.parentElement;
+                 }
+
+                 if (rootTileData) {
+                     performMerge(rootTileData, targetEl, sourceTile, sourceEl, mx, my);
+                 }
+             }
+        }
+    }
+
+    function performMerge(rootTargetTile, hitEl, sourceTile, sourceEl, sx, sy) {
+        // hitEl is the specific DOM element we aimed at. 
+        // It belongs to rootTargetTile structure.
+        
+        // Identify Data for hitEl
+        // Since we have the ID on all tiles...
+        let hitId = parseInt(hitEl.dataset.id);
+        
+        // Case 1: We hit the Root Tile Background
+        // Case 2: We hit a Sub Item
+        
+        let droppedOnItem = false;
+        let subItemData = null;
+        let parentOfSub = null;
+        let indexInParent = -1;
+
+        if (hitId === rootTargetTile.id) {
+            // Hit Root
+            // But Root can be a Container or Pure.
+            // If Root is Pure, it's effectively an Item.
+            // If Root is Container, we hit its background?
+            // User intention: Dropping on Container Background -> Add to List.
+            // Dropping on Pure Root -> Merge with it (Group).
+            
+            if (rootTargetTile.type === 'pure') {
+                droppedOnItem = true;
+                subItemData = rootTargetTile;
+                // It has no parent (it is root)
+                // We handle Root grouping specially
+            }
+        } else {
+             // Hit Nested Item
+             let info = findParentOf(hitId, [rootTargetTile]);
+             if (info) {
+                 droppedOnItem = true;
+                 subItemData = info.item;
+                 parentOfSub = info.parent;
+                 indexInParent = info.index;
+             }
+        }
+
+        // REMOVE Source from Root List
+        tiles = tiles.filter(t => t.id !== sourceTile.id);
+        sourceEl.remove();
+
+        // MERGE
+        if (droppedOnItem) {
+            // Explicit Item Merge -> Always Simplify specific group
+            if (subItemData.type === 'container') {
+                subItemData.parts.push(sourceTile);
+                simplifyContainer(subItemData, true); // Force check
+            } else {
+                // subItemData is Pure.
+                // Create Group [subItem, source].
+                
+                // If subItem was Root Pure, we convert Root to Container.
+                // If subItem was Nested Pure, we wrap it? Or check depth.
+                
+                let targetIsRoot = (subItemData === rootTargetTile);
+                
+                // Depth check (only for nested creation)
+                let depth = targetIsRoot ? 0 : getDepth(rootTargetTile, parentOfSub);
+                
+                if (depth >= MAX_DEPTH) {
+                    // Flatten Fallback: Add to parent (if not root pure?)
+                    // If root pure, we MUST create container (depth 0, allowed).
+                    if (targetIsRoot) {
+                        // Should be allowed
+                        let oldVal = rootTargetTile.value;
+                        rootTargetTile.type = 'container';
+                        rootTargetTile.value = null;
+                        rootTargetTile.parts = [new TileData('pure', oldVal, 0,0), sourceTile];
+                        simplifyContainer(rootTargetTile, true);
+                    } else {
+                        // Add to parent container instead of wrapping
+                        parentOfSub.parts.push(sourceTile);
+                        // Add to parent, no simplify? 
+                        // User intended to merge item.
+                        // Can we check if parent now matches recipe FULLY?
+                        simplifyContainer(parentOfSub, false); 
+                    }
+                } else {
+                    // Allowed to Wrap
+                    if (targetIsRoot) {
+                         // Convert Root
+                         let oldVal = rootTargetTile.value;
+                         let p1 = new TileData('pure', oldVal, 0,0);
+                         rootTargetTile.type = 'container';
+                         rootTargetTile.value = null;
+                         rootTargetTile.parts = [p1, sourceTile];
+                         simplifyContainer(rootTargetTile, true);
+                    } else {
+                        // Wrap Nested
+                        let newGroup = new TileData('container', [subItemData, sourceTile], 0, 0); 
+                        simplifyContainer(newGroup, true);
+                        parentOfSub.parts[indexInParent] = newGroup;
+                    }
+                }
+            }
+            
+        } else {
+            // Dropped on Root Container Background
+            // Just Add.
+            rootTargetTile.parts.push(sourceTile);
+            // Only auto-simplify if FULL MATCH (Hybrid)
+            simplifyContainer(rootTargetTile, false);
+        }
+
+        updateTileVisuals(document.querySelector(`.tile[data-id="${rootTargetTile.id}"]`), rootTargetTile);
+        spawnTileIfNeeded();
+    }
+
+    // -- HELPERS --
+
+    function findParentOf(id, list) {
+        for(let tile of list) {
+            if (tile.type === 'container') {
+                // Direct child?
+                let idx = tile.parts.findIndex(p => p.id === id);
+                if (idx !== -1) return { parent: tile, index: idx, item: tile.parts[idx] };
+                
+                // Deep search
+                let found = findParentOf(id, tile.parts);
+                if (found) return found;
+            }
+        }
+        return null; // Not found
+    }
+
+    function getDepth(root, targetNode) {
+        if (root === targetNode) return 0;
+        if (root.type !== 'container') return -1;
+        
+        for(let p of root.parts) {
+            let d = getDepth(p, targetNode);
+            if (d !== -1) return d + 1;
+        }
+        return -1;
+    }
+
+    // -- RECIPES --
+    // 'force' = Standard behavior (matches subsets)
+    // 'strict' (false) = Only matches if container is perfectly consumed
+    function simplifyContainer(tile, force = true) {
+        if (tile.type === 'pure') return;
+
+        // 1. Recursive Simplify Children always
+        tile.parts.forEach(p => simplifyContainer(p, force));
+
+        // 2. Simplify this level
+        let changed = true;
+        while(changed) {
+            changed = false;
+            
+            let pures = tile.parts.filter(p => p.type === 'pure');
+            
+            // Check Recipes
+            // We collect candidates
+            let recipeMatch = null;
+
+            // 7+7
+            let doubles = {};
+            pures.forEach(p => { if (p.value >= 7) doubles[p.value] = (doubles[p.value] || 0) + 1; });
+            for(let val in doubles) {
+                if (doubles[val] >= 2) {
+                    // This is a match
+                    if (force || tile.parts.length === 2) {
+                        let v = parseInt(val);
+                        removeByVal(tile, v);
+                        removeByVal(tile, v);
+                        tile.parts.push(new TileData('pure', v * 2, 0,0));
+                        changed = true;
+                    }
+                }
+            }
+            if(changed) continue;
+
+            // 4+3
+            if (hasVal(tile, 4) && hasVal(tile, 3)) {
+                if (force || tile.parts.length === 2) {
+                    removeByVal(tile, 4);
+                    removeByVal(tile, 3);
+                    tile.parts.push(new TileData('pure', 7, 0,0));
+                    changed = true;
+                    continue;
+                }
+            }
+
+            // 3+1
+            if (hasVal(tile, 3) && hasVal(tile, 1)) {
+                if (force || tile.parts.length === 2) {
+                    removeByVal(tile, 3);
+                    removeByVal(tile, 1);
+                    tile.parts.push(new TileData('pure', 4, 0,0));
+                    changed = true;
+                    continue;
+                }
+            }
+            
+            // 1+1+1 -> 3
+            let ones = pures.filter(p => p.value === 1);
+            if (ones.length >= 3) {
+                if (force || tile.parts.length === 3) {
+                    removeByVal(tile, 1);
+                    removeByVal(tile, 1);
+                    removeByVal(tile, 1);
+                    tile.parts.push(new TileData('pure', 3, 0,0));
+                    changed = true;
+                    continue; 
+                }
+            }
+        }
+
+        // 3. FLATTEN CHECK (Always safe)
+        if (tile.parts.length === 1 && tile.parts[0].type === 'pure') {
+            let survivor = tile.parts[0];
+            tile.type = 'pure';
+            tile.value = survivor.value;
+            tile.parts = [];
+        }
+    }
+
+    function hasVal(tile, val) {
+        return tile.parts.some(p => p.type === 'pure' && p.value === val);
+    }
+
+    function removeByVal(tile, val) {
+        let idx = tile.parts.findIndex(p => p.type === 'pure' && p.value === val);
+        if (idx !== -1) tile.parts.splice(idx, 1);
+    }
+    
+    function spawnTileIfNeeded() {
+        if (tiles.length < SPAWN_ROWS * SPAWN_COLS) {
+             // Maybe spawn if low? Or just keep random spawning?
+             // User likes "Spawn points" idea.
+             // We can check if any spawn point is free.
+             // spawnTile(1); // Optional: Auto spawn?
+             // Game loop usually spawns on merge/move.
+             // Since we have no "Turns", maybe just a button or timed?
+             // Or auto-replenish if below count?
+             if (tiles.length < 3) spawnTile(1);
+        }
+    }
+
+    // -- RENDER ENGINE --
+
+    function renderTile(tile) {
+        // Create full DOM tree driven by data
+        // For Root tiles, we position absolute.
+        // For children, static.
+        
+        let el = createTileDOM(tile);
+        el.style.left = tile.x + 'px';
+        el.style.top = tile.y + 'px';
+        
+        canvas.appendChild(el);
+        return el;
+    }
+
+    function createTileDOM(tile) {
+        let el = document.createElement('div');
+        el.className = 'tile';
+        el.dataset.id = tile.id;
+        
+        if (tile.type === 'pure') {
+            el.dataset.val = tile.value;
+            el.innerText = tile.value;
+
+            // DYNAMIC COLOR for > 28
+            if (tile.value > 28) {
+                // Procedural Color
+                // Base hue around 10 (Red-Orange from 28).
+                // Let's shift hue by -20 degrees for each step
+                let step = Math.log2(tile.value / 28);
+                let hue = (15 - (step * 25)) % 360; 
+                if (hue < 0) hue += 360;
+                
+                // Saturation high, Lightness around 50-60%
+                el.style.backgroundColor = `hsl(${hue}, 85%, 55%)`;
+                el.style.color = '#fff';
+                el.style.textShadow = '0 1px 2px rgba(0,0,0,0.3)';
+                // Optional: Glow for very high numbers
+                if(tile.value >= 100) {
+                     el.style.boxShadow = `0 0 10px hsl(${hue}, 85%, 55%)`;
+                }
+            } else {
+                // Standard CSS handles it, but ensure we clean up inline sytle if reused
+                el.style.backgroundColor = '';
+                el.style.color = '';
+                el.style.textShadow = '';
+                el.style.boxShadow = ''; 
+            }
+
+        } else {
+            el.classList.add('container');
+            tile.parts.forEach(p => {
+                let sub = createTileDOM(p);
+                // CSS handles positioning (relative) and size now
+                el.appendChild(sub);
+            });
+        }
+        return el;
+    }
+
+    function updateTileVisuals(el, tile) {
+        // Full Re-build of content (safer than diffing for now)
+        el.className = 'tile'; // Reset
+        el.innerHTML = '';
+        el.style.backgroundColor = ''; // clear dynamic color
+        el.style.color = '';
+        el.style.boxShadow = '';
+        
+        // Re-apply classes/content
+        if (tile.type === 'pure') {
+            el.dataset.val = tile.value;
+            el.innerText = tile.value;
+            
+            // DYNAMIC COLOR COPY
+             if (tile.value > 28) {
+                let step = Math.log2(tile.value / 28);
+                let hue = (15 - (step * 25)) % 360; 
+                if (hue < 0) hue += 360;
+                
+                el.style.backgroundColor = `hsl(${hue}, 85%, 55%)`;
+                el.style.color = '#fff';
+                 el.style.textShadow = '0 1px 2px rgba(0,0,0,0.3)';
+                 if(tile.value >= 100) {
+                     el.style.boxShadow = `0 0 10px hsl(${hue}, 85%, 55%)`;
+                }
+            }
+
+        } else {
+            el.classList.add('container');
+            tile.parts.forEach(p => {
+                let sub = createTileDOM(p);
+                 // CSS handles positioning (relative) and size now
+                el.appendChild(sub);
+            });
+        }
+        el.dataset.id = tile.id;
+        el.classList.remove('dragging');
+    }
+
+    // Trigger
+    init();
+    
+    // Add logic to spawn new tile on Button or Interval?
+    // Let's add an onclick to canvas back?
+    // Or just spawn one every 3 merges?
+
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') spawnTile(1);
+    });
+
+</script>
+</body>
+</html>
