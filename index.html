@@ -190,6 +190,7 @@
             font-size: 14px;
             pointer-events: none; /* Let clicks pass through */
             display: none; /* Hidden until boot */
+            transition: opacity 0.3s ease-in-out;
         }
         
         .scan-line {
@@ -209,13 +210,30 @@
             100% { bottom: -100%; }
         }
 
-        .typing-cursor::after {
-            content: '█';
-            animation: blink 1s step-end infinite;
+        #overseer-preview {
+            margin-top: 10px;
+            border: 1px dashed #0f0;
+            padding: 10px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 20, 0, 0.5);
         }
-
-        @keyframes blink {
-            50% { opacity: 0; }
+        
+        #overseer-preview .tile {
+            position: relative !important; /* Override absolute for preview */
+            left: auto !important;
+            top: auto !important;
+            transform: scale(0.9); /* Miniaturize */
+            box-shadow: 0 0 5px #0f0;
+        }
+        
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
         }
 
     </style>
@@ -228,6 +246,7 @@
         <hr style="border-color: #0f0; opacity: 0.3; margin: 5px 0;">
         <div id="overseer-log">Initializing...</div>
         <div id="overseer-quest" style="margin-top: 10px; color: #fff; font-weight: bold;"></div>
+        <div id="overseer-preview"></div>
     </div>
 
     <h1>Free-Form Merge</h1>
@@ -307,26 +326,29 @@
     // -- LOGIC --
 
     function spawnTile(val) {
-        const spawnPoints = Array.from(document.querySelectorAll('.spawn-point'));
-        const available = spawnPoints.filter(sp => {
-            const rect = sp.getBoundingClientRect();
-            return !tiles.some(t => Math.hypot(t.x - rect.left, t.y - rect.top) < 50);
-        });
-
+        // SAFE ZONE: Avoid Top Right (Overseer UI)
+        // x > window.innerWidth - 350 && y < 400
+        
+        let safe = false;
+        let attempts = 0;
         let x, y;
-        if (available.length > 0) {
-            const target = available[Math.floor(Math.random() * available.length)];
-            const rect = target.getBoundingClientRect();
-            x = rect.left;
-            y = rect.top;
-        } else {
-            let attempts = 0;
-            do {
-                x = 50 + Math.random() * (window.innerWidth - 200);
-                y = 50 + Math.random() * (window.innerHeight - 200);
-                attempts++;
-            } while (y < 250 && x > (window.innerWidth - 350) && attempts < 50);
+        
+        while(!safe && attempts < 50) {
+            // Strategy 1: Random (Fallback)
+            x = 50 + Math.random() * (window.innerWidth - 200);
+            y = 50 + Math.random() * (window.innerHeight - 200);
+            
+            // Check Safe Zone
+            if (y < 400 && x > (window.innerWidth - 350)) {
+                safe = false;
+            } else {
+                safe = true;
+            }
+            attempts++;
         }
+        
+        // If we still aren't safe, default to Top Left
+        if (!safe) { x = 100; y = 100; }
 
         const tile = new TileData('pure', val, x, y);
         tiles.push(tile);
@@ -602,6 +624,9 @@
         let px = rect.left - canvasRect.left + rect.width/2;
         let py = rect.top - canvasRect.top + rect.height/2;
         spawnExplosion(px, py, '#f65e3b'); // Default color, ideally from tile
+        
+        // TRIGGER SHAKE
+        triggerScreenShake();
 
         sourceEl.remove();
 
@@ -1199,11 +1224,35 @@
         el.classList.remove('dragging');
     }
 
+    // -- UI INTERACTIONS --
+    // Mouse Tracker for UI Fading
+    document.addEventListener('mousemove', (e) => {
+        let ui = document.getElementById('overseer-ui');
+        if (!ui || ui.style.display === 'none') return;
+        
+        // Check if mouse is near Top-Right corner (where UI is)
+        // UI is approx 300px wide, ~200px+ tall?
+        // Let's safe zone: Right 350px, Top 400px.
+        
+        let inZone = (e.clientX > window.innerWidth - 350) && (e.clientY < 400);
+        
+        if (inZone) {
+            ui.style.opacity = '0.1';
+            ui.style.pointerEvents = 'none'; // Ensure clicks pass through when fading
+        } else {
+            ui.style.opacity = '1';
+            ui.style.pointerEvents = 'none'; // Always pure visual? User asked for interaction?
+            // User said: "make it very transparent when mouse over so the tiles can be clicked"
+            // So we keep it pointer-events: none (it already is via CSS for children, but let's enforce)
+            // But visually full opacity when far away.
+        }
+    });
+
     // -- AI OVERSEER SYSTEM --
     const Overseer = {
         active: false,
         currentQuest: null,
-        level: 1, // Intensity Level
+        level: 1, 
         
         boot: function() {
             this.active = true;
@@ -1213,7 +1262,6 @@
             setTimeout(() => this.log("Connection Established."), 1000);
             setTimeout(() => this.generateQuest(), 2000);
             
-            // Start Check Loop
             setInterval(() => {
                 if(this.currentQuest) this.checkQuest();
             }, 1000);
@@ -1221,115 +1269,164 @@
 
         log: function(msg) {
             let el = document.getElementById('overseer-log');
-            // Typing effect? For now simple text replace or append
             el.innerHTML = `> ${msg}<span class="typing-cursor"></span>`;
         },
 
         generateQuest: function() {
-            // PROGRESSIVE DIFFICULTY
-            // Intensity = Base Level + Random Variance
             this.level++;
             
-            // Calc Target Mass
-            // e.g. Level 2 -> Range 10-15
-            // Level 5 -> Range 25-40
-            let min = 5 + (this.level * 3);
-            let max = 10 + (this.level * 6);
-            let targetMass = Math.floor(min + Math.random() * (max - min));
-            
-            // Determine Quest Type
-            // 30% Pure Number (High Value)
-            // 70% Complex Container (Specific Sum)
+            // Generate a Target Structure (Molecule)
+            // 30% Chance Pure High Value
+            // 70% Chance Complex Container
             let isContainer = Math.random() > 0.3;
+            let targetTile;
             
             if (!isContainer) {
-                // Find a single number close to mass? 
-                // In 2048 logic, numbers are 1, 3, 4, 7, 14, 28, 56...
-                // Let's just ask for a sum in a single container or pure
-                // Actually, "Find Pure" with specific value is hard if value isn't standard.
-                // Revert to Standard Values for Pure Quests
                 let standards = [14, 28, 56, 112, 224];
                 let idx = Math.min(Math.floor(this.level / 3), standards.length - 1);
-                targetMass = standards[idx];
+                targetTile = new TileData('pure', standards[idx], 0, 0);
                 
-                 this.currentQuest = {
-                    type: 'find_value',
-                    value: targetMass,
-                    desc: `Acquire Element of Class [${targetMass}]`
+                this.currentQuest = {
+                    type: 'find_structure',
+                    target: targetTile,
+                    desc: `Synthesize Isotope [${targetTile.value}]`
                 };
             } else {
-                 this.currentQuest = {
-                    type: 'structure_sum',
-                    value: targetMass,
-                    desc: `Construct Container with Total Mass: ${targetMass}`
+                // Generate Random Container Tree
+                // Depth 1 or 2 based on level
+                let depth = this.level > 5 ? 2 : 1;
+                targetTile = this.generateRandomStructure(depth);
+                
+                this.currentQuest = {
+                    type: 'find_structure',
+                    target: targetTile,
+                    desc: `Assemble Specific Molecular Structure`
                 };
             }
             
             // UI Update
             document.getElementById('overseer-quest').innerHTML = `MISSION: ${this.currentQuest.desc}`;
-            this.log(`New Orders. Intensity Level: ${this.level}`);
+            this.log(`New Blueprint Downloaded. Lv ${this.level}`);
+            
+            // Render Preview
+            let previewEl = document.getElementById('overseer-preview');
+            previewEl.innerHTML = '';
+            // We use createTileDOM but need to handle size
+            let visual = createTileDOM(targetTile);
+            previewEl.appendChild(visual);
+        },
+        
+        generateRandomStructure: function(depth) {
+            // SAFE GENERATION LOOP
+            // We must produce a container that does NOT auto-merge.
+            // Rules:
+            // - No 3x [1]
+            // - No [3] + [1] (Wait, 3+1=4? Yes. Avoid specific pairs?)
+            // - No [4] + [3]
+            // - No 2x [Same Value >= 7]
+            
+            let valid = false;
+            let parts = [];
+            let attempts = 0;
+            
+            while(!valid && attempts < 20) {
+                valid = true;
+                parts = [];
+                let count = 2 + Math.floor(Math.random() * 2);
+                let values = []; // Pure values in this container
+                
+                for(let i=0; i<count; i++) {
+                    if (depth > 0 && Math.random() > 0.7) {
+                        parts.push(this.generateRandomStructure(depth - 1));
+                    } else {
+                        let vals = [1, 4, 7];
+                        if (this.level > 3) vals.push(14);
+                        if (this.level > 1 && Math.random() > 0.5) vals.push(3); // Add 3s
+                        
+                        let v = vals[Math.floor(Math.random() * vals.length)];
+                        parts.push(new TileData('pure', v, 0,0));
+                        values.push(v);
+                    }
+                }
+                
+                // VALIDATE THIS COMBINATION
+                let counts = {};
+                values.forEach(v => counts[v] = (counts[v] || 0) + 1);
+                
+                // Check Rules
+                if ((counts[1] || 0) >= 3) valid = false;
+                if ((counts[3] || 0) >= 1 && (counts[1] || 0) >= 1) valid = false; // 3+1 -> 4
+                if ((counts[4] || 0) >= 1 && (counts[3] || 0) >= 1) valid = false; // 4+3 -> 7
+                
+                // Check Doubles >= 7
+                for (let v in counts) {
+                    if (parseInt(v) >= 7 && counts[v] >= 2) valid = false;
+                }
+                
+                attempts++;
+            }
+            
+            // If failed to find specific valid, fallback to simple valid 
+            if (!valid) {
+                return new TileData('container', [
+                    new TileData('pure', 4,0,0), 
+                    new TileData('pure', 1,0,0) // Safe
+                ], 0, 0);
+            }
+
+            return new TileData('container', parts, 0, 0);
         },
 
         checkQuest: function() {
             if (!this.currentQuest) return;
             
-            let found = false;
-            
-            if (this.currentQuest.type === 'find_value') {
-                found = this.scanForValue(tiles, this.currentQuest.value);
-            } else if (this.currentQuest.type === 'structure_sum') {
-                found = this.scanForSum(tiles, this.currentQuest.value);
-            }
+            // Scan all root tiles
+            // We need to check if ANY tile matches the structure
+            let found = tiles.some(t => this.compareStructure(t, this.currentQuest.target));
 
             if (found) {
                 this.completeQuest();
             }
         },
         
-        scanForValue: function(list, val) {
-            for (let t of list) {
-                if (t.type === 'pure' && t.value === val) return true;
-                if (t.type === 'container' && t.parts) {
-                    if (this.scanForValue(t.parts, val)) return true;
-                }
+        compareStructure: function(tile, target) {
+            if (tile.type !== target.type) return false;
+            if (tile.type === 'pure') return tile.value === target.value;
+            
+            // Container matching
+            if (tile.parts.length !== target.parts.length) return false;
+            
+            // Order doesn't matter for "Soup", but for "Structure" it might?
+            // "Exact Container" usually implies content match.
+            // Let's sort both by value/type signature to compare loosely ordered (Bag equality)
+            // Or strict? User said "Exact container".
+            // Let's go with Bag Equality (must contain same items, order irrelevant)
+            
+            let tileItems = [...tile.parts];
+            let targetItems = [...target.parts];
+            
+            // For each target item, find a match in tileItems and remove it
+            for (let tItem of targetItems) {
+                let matchIdx = tileItems.findIndex(p => this.compareStructure(p, tItem));
+                if (matchIdx === -1) return false; // Missing component
+                tileItems.splice(matchIdx, 1); // Consumed
             }
-            return false;
-        },
-        
-        scanForSum: function(list, targetSum) {
-            for (let t of list) {
-                if (t.type === 'container') {
-                    // Calc Sum of this container
-                    let s = this.getContainerSum(t);
-                    if (s === targetSum) return true;
-                    
-                    // Recursive check children
-                    if (this.scanForSum(t.parts, targetSum)) return true;
-                }
-            }
-            return false;
-        },
-        
-        getContainerSum: function(tile) {
-            if (tile.type === 'pure') return tile.value;
-            if (!tile.parts) return 0;
-            return tile.parts.reduce((sum, p) => sum + this.getContainerSum(p), 0);
+            
+            return true;
         },
 
         completeQuest: function() {
-            this.log("OBJECTIVE COMPLETE. REWARD DISPENSED.");
+            this.log("STRUCTURE MATCH CONFIRMED.");
             document.getElementById('overseer-quest').innerHTML = `<span style="color:#0f0">SUCCESS</span>`;
             
-            // Reward: Explosion + Resources
+            let previewEl = document.getElementById('overseer-preview');
+            previewEl.innerHTML = '<div style="color:#0f0; font-size:30px;">✓</div>';
+
             spawnExplosion(window.innerWidth/2, window.innerHeight/2, '#0f0');
-            
-            // Gameplay Reward: Spawn a high-level tile to help?
-            // Or just satisfaction.
-            // Let's spawn a helpful '7'
-            spawnTile(7);
+            spawnTile(7); // Reward
             
             this.currentQuest = null;
-            setTimeout(() => this.generateQuest(), 3000); // Cooldown
+            setTimeout(() => this.generateQuest(), 3000); 
         }
     };
 
@@ -1343,6 +1440,15 @@
     document.addEventListener('keydown', (e) => {
         if (e.code === 'Space') spawnTile(1);
     });
+
+    // -- SCREEN SHAKE --
+    function triggerScreenShake(intensity = 1) {
+        let body = document.body;
+        // Reset animation
+        body.style.animation = 'none';
+        body.offsetHeight; /* trigger reflow */
+        body.style.animation = `shake 0.5s cubic-bezier(.36,.07,.19,.97) both`;
+    }
 
 </script>
 </body>
