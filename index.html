@@ -173,6 +173,58 @@
             border-color: gold !important;
         }
 
+        /* AI TERMINAL OVERLAY */
+        #ai-terminal {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            min-height: 100px;
+            background: rgba(10, 10, 15, 0.9);
+            border: 2px solid #0f0;
+            color: #0f0;
+            padding: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+            pointer-events: none; /* Let clicks pass through if needed */
+            z-index: 9000;
+            backdrop-filter: blur(5px);
+            text-shadow: 0 0 5px #0f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        #ai-terminal::before {
+            content: "SYSTEM_OVERSEER_V1";
+            position: absolute;
+            top: 2px;
+            left: 5px;
+            font-size: 10px;
+            opacity: 0.5;
+            border-bottom: 1px solid #0f0;
+            width: 90%;
+        }
+
+        .terminal-line {
+            margin-bottom: 5px;
+            display: block;
+            opacity: 0;
+            animation: typeIn 0.5s forwards;
+        }
+        
+        .quest-box {
+            border: 1px dashed #0f0;
+            padding: 10px;
+            margin-top: 10px;
+            background: rgba(0, 50, 0, 0.3);
+        }
+
+        @keyframes typeIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
     </style>
 </head>
 <body>
@@ -184,6 +236,15 @@
             <!-- 5x5 Grid generated JS -->
         </div>
         <!-- Tiles appended here -->
+    </div>
+    
+    <div id="ai-terminal">
+        <span class="terminal-line">> INITIALIZING NEURAL LINK...</span>
+        <span class="terminal-line">> CONNECTION ESTABLISHED.</span>
+        <div id="quest-display" class="quest-box" style="display:none">
+            <strong>CURRENT DIRECTIVE:</strong><br>
+            <span id="quest-text">AWAITING ORDERS...</span>
+        </div>
     </div>
 
     <div class="instructions">
@@ -238,6 +299,8 @@
             this.type = type; // 'pure', 'container'
             this.x = x || 100;
             this.y = y || 100;
+            this.vx = 0;
+            this.vy = 0;
             
             if (type === 'pure') {
                 this.value = valOrParts;
@@ -454,7 +517,7 @@
         let elementBelow = document.elementFromPoint(mx, my);
         sourceEl.style.display = '';
 
-        if (!elementBelow) return;
+        if (!elementBelow) return false;
 
         let targetEl = elementBelow.closest('.tile');
         
@@ -537,6 +600,15 @@
 
         // REMOVE Source from Root List
         tiles = tiles.filter(t => t.id !== sourceTile.id);
+        
+        // SPAWN PARTICLES
+        let rect = sourceEl.getBoundingClientRect();
+        let canvasRect = canvas.getBoundingClientRect();
+        let px = rect.left - canvasRect.left + rect.width/2;
+        let py = rect.top - canvasRect.top + rect.height/2;
+        spawnExplosion(px, py, '#f65e3b'); // Default color, ideally from tile
+        triggerShake(5); // Shake it!
+
         sourceEl.remove();
 
         // MERGE
@@ -604,6 +676,48 @@
 
         updateTileVisuals(document.querySelector(`.tile[data-id="${rootTargetTile.id}"]`), rootTargetTile);
         spawnTileIfNeeded();
+    }
+
+    function spawnTile(val) {
+        // Find random position
+        // Avoid Top Right Corner (UI Area: x > width-350, y < 200)
+        let x, y, safe = false;
+        let attempts = 0;
+        
+        while(!safe && attempts < 50) {
+            x = Math.random() * (canvas.clientWidth - 80);
+            y = Math.random() * (canvas.clientHeight - 80);
+            
+            // Check UI overlap
+            // UI is approx 320px wide at right, height ~200px
+            let inUI = (x > canvas.clientWidth - 350 && y < 250);
+            
+            if (!inUI) safe = true;
+            attempts++;
+        }
+        
+        // Validation of val
+        if (!val) val = 1;
+        
+        let tile = {
+            id: Date.now() + Math.random(),
+            value: val,
+            type: 'pure', // 'pure' or 'container'
+            parts: [], // nested items if container
+            x: x,
+            y: y,
+            vx: 0,
+            vy: 0
+        };
+
+        tiles.push(tile);
+        renderTile(tile);
+    }
+    
+    function spawnTileIfNeeded() {
+        if (tiles.length < SPAWN_ROWS * SPAWN_COLS) {
+             // Logic invoked by loop if we used a grid system
+        }
     }
 
     // -- HELPERS --
@@ -723,6 +837,435 @@
     function removeByVal(tile, val) {
         let idx = tile.parts.findIndex(p => p.type === 'pure' && p.value === val);
         if (idx !== -1) tile.parts.splice(idx, 1);
+    }
+    
+    function createGrid() {
+        // Clear logic but keep visual grid for reference
+        let gridEl = document.getElementById('spawn-grid');
+        gridEl.innerHTML = '';
+        // 5x5 Grid for visuals
+        for (let i = 0; i < 25; i++) {
+            let cell = document.createElement('div');
+            cell.className = 'grid-cell';
+            gridEl.appendChild(cell);
+        }
+    }
+    
+    // -- QUEST SYSTEM --
+    let currentQuest = null;
+    let questDifficulty = 1;
+
+    function generateQuest() {
+        // Difficulty 1: Single Item (e.g. "Pure 4")
+        // Difficulty 2: Simple Container (e.g. "Container with two 1s")
+        // Difficulty 3: Specific Sum
+        
+        let type = Math.random() < 0.5 ? 'pure' : 'container';
+        if (questDifficulty === 1) type = 'pure';
+
+        if (type === 'pure') {
+            // Target specific value: 3, 4, 7, 14
+            let tiers = [3, 4, 7, 14, 28, 56];
+            let tierIdx = Math.min(Math.floor(Math.random() * (questDifficulty + 2)), tiers.length-1);
+            let val = tiers[tierIdx];
+            
+            currentQuest = {
+                type: 'pure',
+                criteria: (t) => t.type === 'pure' && t.value === val,
+                desc: `ISOLATE SAMPLE: [${val}]`
+            };
+        } else {
+            // Container Quest
+            // e.g. "Container with 3 items"
+            let count = 2 + Math.floor(Math.random() * 2); // 2 or 3 items
+            currentQuest = {
+                type: 'container',
+                criteria: (t) => t.type === 'container' && t.parts.length === count,
+                desc: `CONSTRUCT: Container with ${count} items.`
+            };
+        }
+
+        updateTerminalUI();
+    }
+
+    function checkQuest() {
+        if (!currentQuest) return;
+
+        // Scan all tiles (Roots only)
+        // Advanced: Scan nested too? For now Root only is clearer.
+        let match = tiles.find(t => currentQuest.criteria(t));
+        
+        if (match) {
+            completeQuest(match);
+        }
+    }
+
+    function completeQuest(tile) {
+        // Visual Reward
+        logTerminal(`> OBJECTIVE COMPLETE.`, '#0f0');
+        logTerminal(`> DATA HARVESTED.`, '#0f0');
+        spawnExplosion(tile.x, tile.y, '#00ff00'); // Green sparks
+        triggerShake(10); // Big Shake
+        
+        // Remove the matched item? Or just reward?
+        // Let's CONSUME it to make it a loop. "Harvested"
+        // But maybe that's annoying. Let's start with just Reward.
+        // Actually, consuming makes space.
+        
+        // Consume animation:
+        let el = document.querySelector(`.tile[data-id="${tile.id}"]`);
+        if (el) {
+            el.style.transition = 'transform 0.5s, opacity 0.5s';
+            el.style.transform = 'scale(0) rotate(360deg)';
+            el.style.opacity = '0';
+            setTimeout(() => {
+                tiles = tiles.filter(t => t !== tile);
+                el.remove();
+            }, 500);
+        }
+
+        currentQuest = null;
+        questDifficulty++;
+        
+        setTimeout(() => {
+            generateQuest();
+        }, 2000);
+    }
+
+    function updateTerminalUI() {
+        let display = document.getElementById('quest-display');
+        let text = document.getElementById('quest-text');
+        
+        if (currentQuest) {
+            display.style.display = 'block'; // Make sure this works
+            text.innerText = currentQuest.desc;
+            text.style.color = '#fff';
+            // console.log("Quest Updated:", currentQuest.desc);
+        } else {
+            // display.style.display = 'none'; 
+            // Keep it visible but say "SCANNING..." for flavor?
+            display.style.display = 'block';
+            text.innerText = "SCANNING SECTOR...";
+            text.style.color = '#555';
+        }
+    }
+
+    function logTerminal(msg, color) {
+        let term = document.getElementById('ai-terminal');
+        let line = document.createElement('span');
+        line.className = 'terminal-line';
+        line.innerText = msg;
+        if(color) line.style.color = color;
+        
+        // Insert before the quest box
+        let box = document.getElementById('quest-display');
+        term.insertBefore(line, box);
+        
+        // Max lines
+        let lines = term.querySelectorAll('.terminal-line');
+        if (lines.length > 6) {
+            lines[0].remove();
+        }
+    }
+    
+    // -- PHYSICS ENGINE --
+    let lastMouseX = 0, lastMouseY = 0;
+    let mouseVX = 0, mouseVY = 0;
+
+    function init() {
+        // Create Grid
+        createGrid();
+        
+        // Spawn Initial Tiles
+        spawnTile(1);
+        spawnTile(1);
+        spawnTile(1);
+
+        // Start Loops
+        requestAnimationFrame(updatePhysics);
+    }
+
+    // -- PARTICLE SYSTEM --
+    let particles = [];
+
+    function spawnExplosion(x, y, color) {
+        for (let i = 0; i < 20; i++) {
+            particles.push({
+                x: x,
+                y: y,
+                vx: (Math.random() - 0.5) * 10,
+                vy: (Math.random() - 0.5) * 10,
+                life: 1.0,
+                color: color || '#gold'
+            });
+        }
+    }
+
+    function updateParticles() {
+        if (particles.length === 0) return;
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= 0.03; // Fade out
+
+            // Retrieve or Create DOM element? 
+            // For performance spawning 20 DOM elements per merge might be heavy.
+            // Let's use a simple overlay div or just manage a pool?
+            // actually, for this "Overengineered" vibe, let's just create them and remove them.
+            // Optimization: Maybe just draw them? No, we stuck to DOM.
+            // Let's use a container for particles.
+            
+            if (!p.el) {
+                p.el = document.createElement('div');
+                p.el.style.position = 'absolute';
+                p.el.style.width = '6px';
+                p.el.style.height = '6px';
+                p.el.style.borderRadius = '50%';
+                p.el.style.backgroundColor = p.color;
+                p.el.style.pointerEvents = 'none';
+                p.el.style.zIndex = '9999';
+                canvas.appendChild(p.el);
+            }
+            
+            p.el.style.left = p.x + 'px';
+            p.el.style.top = p.y + 'px';
+            p.el.style.opacity = p.life;
+            p.el.style.transform = `scale(${p.life})`;
+
+            if (p.life <= 0) {
+                p.el.remove();
+                particles.splice(i, 1);
+            }
+        }
+        
+        // Handle Shake
+        if (shakeTime > 0) {
+            let dx = (Math.random() - 0.5) * shakeTime * 2;
+            let dy = (Math.random() - 0.5) * shakeTime * 2;
+            canvas.style.transform = `translate(${dx}px, ${dy}px)`;
+            shakeTime -= 1;
+        } else {
+            canvas.style.transform = '';
+        }
+    }
+    
+    let shakeTime = 0;
+    function triggerShake(amount) {
+        shakeTime = amount || 10;
+    }
+
+    function updatePhysics() {
+        // ... (existing physics code) ...
+        updateParticles(); // Add this line
+        checkQuest(); // Check for completion every frame
+
+        // Friction factor
+        const friction = 0.92;
+        const stopThreshold = 0.1;
+
+        tiles.forEach(tile => {
+            // Only physics for Root tiles that are NOT being dragged
+            // Nested tiles move with parent. Dragged tiles move with mouse.
+            if ((!dragItem || dragItem.tile !== tile) && (Math.abs(tile.vx) > stopThreshold || Math.abs(tile.vy) > stopThreshold)) {
+                
+                // Apply Velocity
+                tile.x += tile.vx;
+                tile.y += tile.vy;
+
+                // Apply Friction
+                tile.vx *= friction;
+                tile.vy *= friction;
+
+                // Wall Bounce (Canvas Boundaries)
+                // Assume canvas currently expands? Or fixed? 
+                // Let's assume window-ish bounds or just ensure positive for now
+                // Ideally we get canvas size
+                let maxX = canvas.clientWidth - 80; // approximate tile width
+                let maxY = canvas.clientHeight - 80;
+
+                if (tile.x < 0) { tile.x = 0; tile.vx = -tile.vx * 0.7; }
+                if (tile.y < 0) { tile.y = 0; tile.vy = -tile.vy * 0.7; }
+                // Optional: Max bounds if we want to contain them
+                 if (tile.x > maxX && maxX > 0) { tile.x = maxX; tile.vx = -tile.vx * 0.7; }
+                 if (tile.y > maxY && maxY > 0) { tile.y = maxY; tile.vy = -tile.vy * 0.7; }
+
+                // Update DOM
+                let el = document.querySelector(`.tile[data-id="${tile.id}"]`);
+                if (el) {
+                    el.style.left = tile.x + 'px';
+                    el.style.top = tile.y + 'px';
+                }
+            } else {
+                // Zero out if very slow
+                 if (!dragItem || dragItem.tile !== tile) {
+                    tile.vx = 0;
+                    tile.vy = 0;
+                 }
+            }
+        });
+
+        requestAnimationFrame(updatePhysics);
+    }
+    
+    // -- INPUT HANDLING --
+
+    let dragOffset = {x:0, y:0};
+
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    function handleMouseDown(e) {
+        let el = e.target.closest('.tile');
+        if (!el) return;
+
+        // Validating data exists
+        if (!el.dataset.id) return;
+
+        let id = parseInt(el.dataset.id);
+        
+        // Find Tile Object (Root or Nested)
+        let root = tiles.find(t => t.id === id);
+        
+        if (root) {
+            // Stop physics when grabbed
+            root.vx = 0; 
+            root.vy = 0;
+            startDrag(root, el, e.clientX, e.clientY);
+        } else {
+             // ... nested logic ...
+            // Nested Item Drag
+            let parentInfo = findParentOf(id, tiles);
+            if (parentInfo) {
+                // 1. CAPTURE COORDINATES *BEFORE* MODIFYING DOM
+                let rect = el.getBoundingClientRect();
+                let canvasRect = canvas.getBoundingClientRect();
+
+                let item = parentInfo.item;
+                parentInfo.parent.parts.splice(parentInfo.index, 1);
+                
+                // Cleanup Parent
+                // STRICT MODE: When dragging OUT, do not auto-combine remaining junk.
+                simplifyContainer(parentInfo.parent, false);
+                
+                if (tiles.includes(parentInfo.parent) && parentInfo.parent.parts.length === 0 && parentInfo.parent.type === 'container') {
+                    tiles = tiles.filter(t => t !== parentInfo.parent);
+                    let parentEl = document.querySelector(`.tile[data-id="${parentInfo.parent.id}"]`);
+                    if(parentEl) parentEl.remove();
+                } else {
+                    let parentEl = document.querySelector(`.tile[data-id="${parentInfo.parent.id}"]`);
+                    if (parentEl) updateTileVisuals(parentEl, parentInfo.parent);
+                }
+
+                // Promote to Root
+                // Use captured rects
+                item.x = rect.left - canvasRect.left;
+                item.y = rect.top - canvasRect.top;
+                tiles.push(item);
+                
+                let newEl = renderTile(item);
+                startDrag(item, newEl, e.clientX, e.clientY);
+            }
+        }
+    }
+
+    function startDrag(tileObj, domEl, mx, my) {
+        isDragging = true;
+        
+        // Calculate offset mouse has inside the tile
+        let rect = domEl.getBoundingClientRect();
+        let canvasRect = canvas.getBoundingClientRect();
+        
+        // Important: Coordinate system is relative to Canvas
+        let tileX = rect.left - canvasRect.left;
+        let tileY = rect.top - canvasRect.top;
+        
+        dragOffset = {
+            x: mx - tileX, // e.g. mouse is 10px in from left
+            y: my - tileY
+        };
+
+        dragItem = {
+            tile: tileObj,
+            el: domEl
+        };
+
+        domEl.classList.add('dragging');
+        domEl.style.zIndex = 1000;
+        
+        // HIT TEST FEEDBACK INITIAL
+        document.querySelectorAll('.hover-target').forEach(el => el.classList.remove('hover-target'));
+        
+        // Reset Velocity tracking
+        lastMouseX = mx;
+        lastMouseY = my;
+        mouseVX = 0;
+        mouseVY = 0;
+    }
+
+    function handleMouseMove(e) {
+        if (!isDragging || !dragItem) return;
+        
+        // Calculate Velocity
+        mouseVX = e.clientX - lastMouseX;
+        mouseVY = e.clientY - lastMouseY;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+
+        // Move Logic
+        let canvasRect = canvas.getBoundingClientRect();
+        let mouseInsideX = e.clientX - canvasRect.left; 
+        let mouseInsideY = e.clientY - canvasRect.top;
+
+        // Apply Offset
+        let newX = mouseInsideX - dragOffset.x;
+        let newY = mouseInsideY - dragOffset.y;
+        
+        dragItem.tile.x = newX;
+        dragItem.tile.y = newY;
+        
+        dragItem.el.style.left = newX + 'px';
+        dragItem.el.style.top = newY + 'px';
+        
+        // HIT TEST FEEDBACK
+        // Temporarily hide drag item to see what's under
+        dragItem.el.style.display = 'none';
+        let elBelow = document.elementFromPoint(e.clientX, e.clientY);
+        dragItem.el.style.display = '';
+
+        // Clear previous highlights
+        document.querySelectorAll('.hover-target').forEach(el => el.classList.remove('hover-target'));
+
+        if (elBelow) {
+            let targetTileEl = elBelow.closest('.tile');
+            // Don't highlight self or dragging parts (not possible if hidden, but safe check)
+            if (targetTileEl && targetTileEl !== dragItem.el) {
+                // If it's a sub-item, highlighting it helps user know they will hit IT, not the container
+                targetTileEl.classList.add('hover-target');
+            }
+        }
+    }
+
+    function handleMouseUp(e) {
+        if (!isDragging || !dragItem) return;
+
+        isDragging = false;
+        dragItem.el.classList.remove('dragging');
+        dragItem.el.style.zIndex = '';
+        document.querySelectorAll('.hover-target').forEach(el => el.classList.remove('hover-target'));
+
+        // Use Mouse Position for Merge Check
+        let merged = checkMerge(dragItem.tile, dragItem.el, e.clientX, e.clientY);
+        
+        if (!merged) {
+            // THROW MECHANIC: Apply collected mouse velocity to the tile
+            dragItem.tile.vx = mouseVX * 1.5; // Amplify slightly for feel
+            dragItem.tile.vy = mouseVY * 1.5;
+        }
+
+        dragItem = null;
     }
     
     function spawnTileIfNeeded() {
