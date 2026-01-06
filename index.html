@@ -32,16 +32,14 @@
             pointer-events: none;
         }
 
+        /* INSTRUCTIONS Layer 0 (Background Wallpaper) */
         .instructions {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            background: rgba(238, 228, 218, 0.9);
-            padding: 15px;
-            border-radius: 5px;
-            max-width: 300px;
             font-size: 14px;
-            z-index: 1000;
+            color: rgba(119, 110, 101, 0.4); /* Faded info */
+            z-index: 0; 
+            position: absolute;
+            left: 20px;
+            bottom: 20px;
             pointer-events: auto;
         }
 
@@ -74,33 +72,58 @@
         }
 
         /* TILES */
+        /* TILES Layer 10 */
         .tile {
-            position: absolute;
-            min-width: var(--tile-base-size);
-            min-height: var(--tile-base-size);
-            border-radius: 4px;
-            display: inline-flex;
+            width: 60px;
+            height: 60px;
+            background-color: #cdc1b4;
+            border-radius: 4px; /* Rounded for feel */
+            
+            /* Center visual content */
+            display: flex;
             justify-content: center;
             align-items: center;
-            font-weight: bold;
             font-size: 24px;
-            cursor: grab;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            transition: transform 0.1s ease, background-color 0.2s;
-            box-sizing: border-box;
-            z-index: 10;
-        }
+            font-weight: bold;
+            color: #776e65;
 
+            user-select: none;
+            cursor: grab;
+            position: absolute; /* Free dragging */
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.2); 
+            transition: transform 0.1s, box-shadow 0.1s; /* Smooth interactions */
+            
+            z-index: 10; /* Above UI */
+        }
+        
         .tile:active {
             cursor: grabbing;
         }
 
         .tile.dragging {
-            z-index: 1000 !important;
-            box-shadow: 0 15px 30px rgba(0,0,0,0.4);
-            transform: scale(1.1);
-            opacity: 0.7; /* Transparency as requested */
-            transition: none;
+            cursor: grabbing;
+            transform: scale(1.15) !important;
+            box-shadow: 10px 10px 20px rgba(0,0,0,0.3) !important;
+            z-index: 1000 !important; /* Topmost */
+        }
+        
+        body.mode-split .tile {
+            cursor: crosshair !important; /* Targeting cursor */
+            border-color: #0ff !important;
+        }
+
+        #tool-ui {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid #777;
+            padding: 10px;
+            color: #ccc;
+            font-family: monospace;
+            cursor: pointer;
+            z-index: 100;
+            user-select: none;
         }
 
         /* Pure Numbers */
@@ -180,13 +203,13 @@
             top: 10px;
             right: 10px;
             width: 300px;
-            background: rgba(0, 0, 0, 0.85);
-            border: 1px solid #0f0;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 255, 0, 0.3);
             color: #0f0;
             font-family: 'Courier New', Courier, monospace;
             padding: 10px;
-            z-index: 2000;
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.2);
+            z-index: 1; /* Background Layer */
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.1);
             font-size: 14px;
             pointer-events: none; /* Let clicks pass through */
             display: none; /* Hidden until boot */
@@ -248,6 +271,8 @@
         <div id="overseer-quest" style="margin-top: 10px; color: #fff; font-weight: bold;"></div>
         <div id="overseer-preview"></div>
     </div>
+    
+    <div id="tool-ui">CHARGES: [|||] <span style="font-size:10px">(Right-Click to Split)</span></div>
 
     <h1>Free-Form Merge</h1>
     
@@ -259,13 +284,11 @@
     </div>
 
     <div class="instructions">
-        <strong>Regeln:</strong><br>
-        - Frei bewegen.<br>
-        - Aufeinander werfen zum Mergen.<br>
-        - <strong>1+1 -> [1,1]</strong><br>
-        - <strong>[1,1]+1 -> 3</strong><br>
-        - <strong>3+4 -> 7</strong><br>
-        - Container wachsen automatisch.<br>
+        <strong>// PROTOCOL:</strong><br>
+        1. MERGE FLUIDS TO INCREASE MASS.<br>
+        2. THROW TO REARRANGE.<br>
+        3. OBEY THE OVERSEER.<br>
+        > ENDLESS SANDBOX INITIALIZED.
     </div>
 
 <script>
@@ -325,7 +348,7 @@
 
     // -- LOGIC --
 
-    function spawnTile(val) {
+    function spawnTile(overrideVal) {
         // SAFE ZONE: Avoid Top Right (Overseer UI)
         // x > window.innerWidth - 350 && y < 400
         
@@ -349,6 +372,35 @@
         
         // If we still aren't safe, default to Top Left
         if (!safe) { x = 100; y = 100; }
+
+        let val = overrideVal;
+        
+        if (!val) {
+             // PROGRESSION SPAWNING
+             // Base: 1
+             // As capacity grows, spawn higher.
+             // Cap at unlockedTier / 4 ? 
+             // Example: Tier 112 -> Can spawn 28s? 
+             // Let's go tier / 8 to be safe grind logic. 112 -> 14. 
+             
+             let maxT = (Overseer.unlockedTier || 7);
+             let cap = Math.max(1, maxT / 8); 
+             // Candidate pools: 1, 4, 7... up to cap
+             let pool = [1];
+             if (cap >= 4) pool.push(4);
+             if (cap >= 7) pool.push(7);
+             
+             let t = 14;
+             while (t <= cap) {
+                 pool.push(t);
+                 t *= 2; 
+             }
+             
+             // Weighted Random: heavily favor 1s still?
+             // Or uniform from pool?
+             // Uniform is much nicer for "feel".
+             val = pool[Math.floor(Math.random() * pool.length)];
+        }
 
         const tile = new TileData('pure', val, x, y);
         tiles.push(tile);
@@ -384,6 +436,23 @@
     document.addEventListener('mouseup', handleMouseUp);
 
     function handleMouseDown(e) {
+        if (Tools.mode === 'split') {
+            // Split Logic
+            let el = e.target.closest('.tile');
+            if (el) {
+                let id = parseInt(el.dataset.id);
+                // Find tile (Root or Nested?)
+                // Since removing nested is complex, let's limit splitting to ROOT tiles first?
+                // Or findParentOf.
+                
+                let t = tiles.find(x => x.id === id); // Try root
+                if (t) {
+                    Tools.useSplit(t);
+                } 
+            }
+            return; // Stop drag
+        }
+
         let el = e.target.closest('.tile');
         if (!el) return;
         
@@ -634,7 +703,10 @@
         if (droppedOnItem) {
             // Explicit Item Merge -> Always Simplify specific group
             if (subItemData.type === 'container') {
-                subItemData.parts.push(sourceTile);
+                // use Safe Add
+                let currentDepth = getDepth(rootTargetTile, subItemData);
+                flattenAndAdd(subItemData, sourceTile, currentDepth);
+                
                 simplifyContainer(subItemData, true); // Force check
             } else {
                 // subItemData is Pure.
@@ -723,6 +795,46 @@
             if (d !== -1) return d + 1;
         }
         return -1;
+    }
+
+    function getTreeDepth(tile) {
+        if (tile.type !== 'container') return 0;
+        if (!tile.parts || tile.parts.length === 0) return 0;
+        let max = 0;
+        for(let p of tile.parts) {
+            max = Math.max(max, getTreeDepth(p));
+        }
+        return 1 + max;
+    }
+
+    function flattenAndAdd(targetContainer, itemToAdd, targetDepth) {
+        // Can we add this item as is?
+        // If it's pure, yes always.
+        if (itemToAdd.type === 'pure') {
+            targetContainer.parts.push(itemToAdd);
+            return;
+        }
+
+        // It is a container.
+        // New depth would be targetDepth + 1 + childDepth
+        // Check if the container ITSELF exceeds depth at this level
+        if (targetDepth + 1 > MAX_DEPTH) {
+            // Unpack this container
+            itemToAdd.parts.forEach(p => flattenAndAdd(targetContainer, p, targetDepth));
+        } else {
+            // Wrapper is fine, but are its children?
+            // If itemToAdd is deep, we might need to partially flatten IT?
+            // Actually, if we just check total depth:
+            let itemDepth = getTreeDepth(itemToAdd); // 1 = container with pures
+            
+            if (targetDepth + itemDepth > MAX_DEPTH) {
+                // Too deep. Unpack.
+                itemToAdd.parts.forEach(p => flattenAndAdd(targetContainer, p, targetDepth));
+            } else {
+                // Safe to add
+                targetContainer.parts.push(itemToAdd);
+            }
+        }
     }
 
     // -- RECIPES --
@@ -844,6 +956,180 @@
         // Start Loops
         requestAnimationFrame(updatePhysics);
     }
+
+    // -- TOOL MANAGER --
+    const Tools = {
+        charges: 3,
+        maxCharges: 3,
+        
+        // Remove Mode Toggle. Right Click is Split.
+        
+        addCharges: function(amount) {
+            this.charges = Math.min(this.forcesMax || this.maxCharges, this.charges + amount);
+            this.updateUI();
+        },
+        
+        findTileById: function(id) {
+            // Check Roots
+            let root = tiles.find(t => t.id === id);
+            if (root) return { tile: root, parent: null, isRoot: true };
+            
+            // Check Nested
+            for (let t of tiles) {
+                if (t.type === 'container') {
+                    let info = findParentOf(id, t.parts);
+                    if (info) return { tile: info.item, parent: info.parent, isRoot: false };
+                }
+            }
+            return null;
+        },
+
+        useSplit: function(id) {
+            if (this.charges <= 0) return;
+            
+            let info = this.findTileById(id);
+            if (!info) return;
+            
+            let tile = info.tile;
+            
+            // LOGIC: Reverse Merge
+            let used = false;
+            
+            if (tile.type === 'container') {
+                // UNPACK CONTAINER
+                // If Root: Delete Root, Spawn Parts as new Roots.
+                // If Nested: Delete Item from Parent, Spawn Parts as new Items in Parent (flattened?)
+                // Actually, user might want to extract items FROM a container.
+                // Let's settle on: "Explode to World". Even if nested, it breaks out of the container?
+                // Or "Unpack in place"?
+                // "Unpack in place" is safer for nested.
+                
+                let parts = tile.parts;
+                
+                if (info.isRoot) {
+                    // Remove Root
+                    tiles = tiles.filter(t => t.id !== tile.id);
+                    document.querySelector(`.tile[data-id="${tile.id}"]`)?.remove();
+                    
+                    // Spawn Parts as Roots
+                    parts.forEach(p => {
+                        p.x = tile.x + (Math.random()-0.5)*40;
+                        p.y = tile.y + (Math.random()-0.5)*40;
+                        p.vx = (Math.random()-0.5)*15;
+                        p.vy = (Math.random()-0.5)*15;
+                        p.id = nextId++; 
+                        tiles.push(p);
+                        renderTile(p);
+                    });
+                } else {
+                    // Nested: Remove from Parent, Add children to Parent
+                    let pIdx = info.parent.parts.indexOf(tile);
+                    if (pIdx !== -1) {
+                        info.parent.parts.splice(pIdx, 1);
+                        // Add children
+                        // We must re-id? No, internal IDs likely fine if unique. But let's be safe.
+                        parts.forEach(p => {
+                             p.id = nextId++;
+                             info.parent.parts.push(p);
+                        });
+                        // Recalculate Parent visual
+                        // We need to find Root of this parent to update DOM
+                        // optimize later, for now we rely on the loop update or force update
+                        // We don't have easy link to Root from here easily without search.
+                        // But wait, split is rare. We can just refresh logic.
+                    }
+                }
+                used = true;
+
+            } else if (tile.type === 'pure') {
+                if (tile.value <= 1) {
+                    // Cannot split 1.
+                    // Special: Split 1 into... Nothing? (Destroy?)
+                    // User might want to trash items.
+                    // Let's say Split 1 = Destroy.
+                    
+                     if (info.isRoot) {
+                        tiles = tiles.filter(t => t.id !== tile.id);
+                        document.querySelector(`.tile[data-id="${tile.id}"]`)?.remove();
+                     } else {
+                        let pIdx = info.parent.parts.indexOf(tile);
+                        if (pIdx !== -1) info.parent.parts.splice(pIdx, 1);
+                     }
+                     used = true;
+                     
+                     // Check if board empty (Soft lock prevention)
+                     setTimeout(spawnTileIfNeeded, 200);
+
+                } else {
+                    // Break Down Recipes
+                    const recipes = {
+                       "3": [1, 1, 1],
+                       "4": [3, 1],
+                       "7": [4, 3],
+                       "14": [7, 7],
+                       "28": [14, 14],
+                       "56": [28, 28],
+                       "112": [56, 56],
+                       "224": [112, 112],
+                       "448": [224, 224],
+                       "896": [448, 448],
+                       "1792": [896, 896]
+                    };
+                    
+                    let parts = recipes[tile.value];
+                    if (parts) {
+                         // Similar logic to container unpack
+                         // We are converting a Pure Tile into multiple Pure Tiles.
+                         
+                         let newItems = parts.map(v => new TileData('pure', v, 0, 0));
+                         
+                         if (info.isRoot) {
+                             tiles = tiles.filter(t => t.id !== tile.id);
+                             document.querySelector(`.tile[data-id="${tile.id}"]`)?.remove();
+                             newItems.forEach(t => {
+                                t.x = tile.x + (Math.random()-0.5)*20;
+                                t.y = tile.y + (Math.random()-0.5)*20;
+                                t.vx = (Math.random()-0.5)*10;
+                                t.vy = (Math.random()-0.5)*10;
+                                tiles.push(t);
+                                renderTile(t);
+                             });
+                         } else {
+                             let pIdx = info.parent.parts.indexOf(tile);
+                             if (pIdx !== -1) {
+                                 info.parent.parts.splice(pIdx, 1);
+                                 newItems.forEach(t => info.parent.parts.push(t));
+                             }
+                         }
+                         used = true;
+                    }
+                }
+            }
+            
+            if (used) {
+                this.charges--;
+                this.updateUI();
+                // Visual FX
+                let rect = document.querySelector(`.tile[data-id="${id}"]`)?.getBoundingClientRect();
+                if (rect) {
+                     spawnExplosion(rect.left + rect.width/2, rect.top + rect.height/2, '#00ffff');
+                } else {
+                     spawnExplosion(tile.x || 100, tile.y || 100, '#00ffff');
+                }
+                
+                // Safety: If board empty (e.g. split last 1), spawn
+                setTimeout(spawnTileIfNeeded, 500); 
+            }
+        },
+        
+        updateUI: function() {
+            let el = document.getElementById('tool-ui');
+            if (el) {
+                el.innerHTML = `CHARGES: [${'|'.repeat(this.charges)}] <span style="font-size:10px">(Right-Click to Split)</span>`;
+                el.style.color = this.charges > 0 ? '#0ff' : '#555';
+            }
+        }
+    };
 
     // -- PARTICLE SYSTEM --
     let particles = [];
@@ -1121,7 +1407,7 @@
              // Game loop usually spawns on merge/move.
              // Since we have no "Turns", maybe just a button or timed?
              // Or auto-replenish if below count?
-             if (tiles.length < 3) spawnTile(1);
+             if (tiles.length < 3) spawnTile();
         }
     }
 
@@ -1225,28 +1511,7 @@
     }
 
     // -- UI INTERACTIONS --
-    // Mouse Tracker for UI Fading
-    document.addEventListener('mousemove', (e) => {
-        let ui = document.getElementById('overseer-ui');
-        if (!ui || ui.style.display === 'none') return;
-        
-        // Check if mouse is near Top-Right corner (where UI is)
-        // UI is approx 300px wide, ~200px+ tall?
-        // Let's safe zone: Right 350px, Top 400px.
-        
-        let inZone = (e.clientX > window.innerWidth - 350) && (e.clientY < 400);
-        
-        if (inZone) {
-            ui.style.opacity = '0.1';
-            ui.style.pointerEvents = 'none'; // Ensure clicks pass through when fading
-        } else {
-            ui.style.opacity = '1';
-            ui.style.pointerEvents = 'none'; // Always pure visual? User asked for interaction?
-            // User said: "make it very transparent when mouse over so the tiles can be clicked"
-            // So we keep it pointer-events: none (it already is via CSS for children, but let's enforce)
-            // But visually full opacity when far away.
-        }
-    });
+    // [Mouse Tracker Removed: UI is now Background Layer]
 
     // -- AI OVERSEER SYSTEM --
     const Overseer = {
@@ -1273,77 +1538,113 @@
         },
 
         generateQuest: function() {
-            this.level++;
+            // Level Logic
+            // Accelerate level slightly.
+            this.level = 1 + Math.floor(this.questsCompleted / 2);
             
-            // Generate a Target Structure (Molecule)
-            // 30% Chance Pure High Value
-            // 70% Chance Complex Container
-            let isContainer = Math.random() > 0.3;
-            let targetTile;
+            // Breakthrough every 3 quests.
+            // Allow quest 0 to be a breakthrough? 
+            // If unlockedTier is 7, we might want to ask for 14 immediately?
+            // "never reach the first Assemble isotope".
+            // Let's make the FIRST quest (0) a breakthrough to verify they can make 14.
+            // Then 1, 2 = Structure. 3 = Breakthrough (28).
+
+            //i liek that youre adding comments here to actually do the right stuff.
+            //maybe really make the first level 1 or 0 to asemble isotope 7
+            //then 3 quests then isotope 14, and so on, but also make it increase with level so you must solve multiple more when leveling up until you get next breakthrough, 
+            //yea dont force to many is actually nto a bad call, amybe limit it to a maximum ceartain amount of quest in "endgame"
             
-            if (!isContainer) {
-                let standards = [14, 28, 56, 112, 224];
-                let idx = Math.min(Math.floor(this.level / 3), standards.length - 1);
-                targetTile = new TileData('pure', standards[idx], 0, 0);
+            let isBreakthrough = (this.questsCompleted % 3 === 0);
+            
+            // Safety: If unlockedTier is very high, maybe don't force too many?
+            // Let's stick to the cycle.
+            
+            if (isBreakthrough) {
+                // UNLOCK NEXT TIER
+                let nextTarget = this.unlockedTier * 2;
+                this.log(`BREAKTHROUGH REQUIRED: SYNTHESIZE [${nextTarget}]`);
                 
                 this.currentQuest = {
-                    type: 'find_structure',
-                    target: targetTile,
-                    desc: `Synthesize Isotope [${targetTile.value}]`
+                    text: `Synthesize Isotope [${nextTarget}]`,
+                    target: new TileData('pure', nextTarget, 0,0),
+                    rewardVal: nextTarget, // EXACT REWARD
+                    isBreakthrough: true
                 };
-            } else {
-                // Generate Random Container Tree
-                // Depth 1 or 2 based on level
-                let depth = this.level > 5 ? 2 : 1;
-                targetTile = this.generateRandomStructure(depth);
                 
+            } else {
+                // Standard Structure Quest
+                // Scale complexity with level
+                let complexity = Math.min(3, 1 + Math.floor(this.level/3)); 
+                let struct = this.generateRandomStructure(complexity); 
+                
+                // Determine Reward: Highest value in the structure
+                let maxVal = 7;
+                const scan = (t) => {
+                    if (t.type === 'pure') maxVal = Math.max(maxVal, t.value);
+                    if (t.parts) t.parts.forEach(scan);
+                };
+                scan(struct);
+                
+                // If the structure is wimpy, reward at least unlockedTier
+                maxVal = Math.max(maxVal, this.unlockedTier / 2);
+
+                this.log(`NEW OBJECTIVE: ASSEMBLE STRUCTURE`);
                 this.currentQuest = {
-                    type: 'find_structure',
-                    target: targetTile,
-                    desc: `Assemble Specific Molecular Structure`
+                    text: "Assemble Specific Molecular Structure",
+                    target: struct,
+                    rewardVal: maxVal
                 };
             }
-            
-            // UI Update
-            document.getElementById('overseer-quest').innerHTML = `MISSION: ${this.currentQuest.desc}`;
-            this.log(`New Blueprint Downloaded. Lv ${this.level}`);
-            
+
             // Render Preview
-            let previewEl = document.getElementById('overseer-preview');
-            previewEl.innerHTML = '';
-            // We use createTileDOM but need to handle size
-            let visual = createTileDOM(targetTile);
-            previewEl.appendChild(visual);
+            this.renderPreview(this.currentQuest.target);
+            document.getElementById('overseer-quest').innerText = this.currentQuest.text;
         },
         
         generateRandomStructure: function(depth) {
             // SAFE GENERATION LOOP
-            // We must produce a container that does NOT auto-merge.
-            // Rules:
-            // - No 3x [1]
-            // - No [3] + [1] (Wait, 3+1=4? Yes. Avoid specific pairs?)
-            // - No [4] + [3]
-            // - No 2x [Same Value >= 7]
-            
             let valid = false;
             let parts = [];
             let attempts = 0;
             
-            while(!valid && attempts < 20) {
+            // POOL CONSTRUCTION based on Level
+            // As we level up, we want to see HIGHER numbers more often, and LOWER numbers less.
+            // Level 1: [1, 4, 7]
+            // Level 10: [4, 7, 14, 28] (Example)
+            
+            let pool = [1, 4, 7];
+            let tier = 14;
+            while (tier <= this.unlockedTier) {
+                pool.push(tier);
+                tier *= 2;
+            }
+            
+            // Filter Lows if high level
+            if (this.level > 5 && pool.length > 3) pool = pool.filter(x => x !== 1); // Remove 1s
+            if (this.level > 10 && pool.length > 3) pool = pool.filter(x => x !== 4); // Remove 4s
+            
+            // WEIGHTED SELECTION Helper
+            // Bias towards the end of the array (Higher numbers)
+            const pick = () => {
+                // Linear weight? or just random "max" bias?
+                // Let's try: Roll two dice, take higher index?
+                let idx1 = Math.floor(Math.random() * pool.length);
+                let idx2 = Math.floor(Math.random() * pool.length);
+                // Bias towards higher index (which are higher numbers)
+                return pool[Math.max(idx1, idx2)];
+            };
+            
+            while(!valid && attempts < 50) {
                 valid = true;
                 parts = [];
                 let count = 2 + Math.floor(Math.random() * 2);
-                let values = []; // Pure values in this container
+                let values = []; 
                 
                 for(let i=0; i<count; i++) {
                     if (depth > 0 && Math.random() > 0.7) {
                         parts.push(this.generateRandomStructure(depth - 1));
                     } else {
-                        let vals = [1, 4, 7];
-                        if (this.level > 3) vals.push(14);
-                        if (this.level > 1 && Math.random() > 0.5) vals.push(3); // Add 3s
-                        
-                        let v = vals[Math.floor(Math.random() * vals.length)];
+                        let v = pick(); // Use weighted picker
                         parts.push(new TileData('pure', v, 0,0));
                         values.push(v);
                     }
@@ -1355,10 +1656,10 @@
                 
                 // Check Rules
                 if ((counts[1] || 0) >= 3) valid = false;
-                if ((counts[3] || 0) >= 1 && (counts[1] || 0) >= 1) valid = false; // 3+1 -> 4
-                if ((counts[4] || 0) >= 1 && (counts[3] || 0) >= 1) valid = false; // 4+3 -> 7
+                if ((counts[3] || 0) >= 1 && (counts[1] || 0) >= 1) valid = false; 
+                if ((counts[4] || 0) >= 1 && (counts[3] || 0) >= 1) valid = false; 
                 
-                // Check Doubles >= 7
+                // Check Doubles >= 7 for ALL unlocked tiers
                 for (let v in counts) {
                     if (parseInt(v) >= 7 && counts[v] >= 2) valid = false;
                 }
@@ -1366,15 +1667,18 @@
                 attempts++;
             }
             
-            // If failed to find specific valid, fallback to simple valid 
             if (!valid) {
-                return new TileData('container', [
-                    new TileData('pure', 4,0,0), 
-                    new TileData('pure', 1,0,0) // Safe
-                ], 0, 0);
+                 // Safe fallback
+                 return new TileData('container', [new TileData('pure', 4,0,0), new TileData('pure', 1,0,0)], 0, 0);
             }
-
             return new TileData('container', parts, 0, 0);
+        },
+
+        renderPreview: function(targetTile) {
+            let previewEl = document.getElementById('overseer-preview');
+            previewEl.innerHTML = '';
+            let visual = createTileDOM(targetTile);
+            previewEl.appendChild(visual);
         },
 
         checkQuest: function() {
@@ -1425,6 +1729,11 @@
             spawnExplosion(window.innerWidth/2, window.innerHeight/2, '#0f0');
             spawnTile(7); // Reward
             
+            // RECHARGE TOOLS
+            // "get 3 splits... limit of 3... when reaching 112... +1 split on every order of magnitude"
+            // For now: Cap at 3. Refill 3.
+            Tools.addCharges(3);
+            
             this.currentQuest = null;
             setTimeout(() => this.generateQuest(), 3000); 
         }
@@ -1438,7 +1747,17 @@
 
     // Spawn controls
     document.addEventListener('keydown', (e) => {
-        if (e.code === 'Space') spawnTile(1);
+        if (e.code === 'Space') spawnTile();
+    });
+    
+    // TOOL LISTENER: Right Click
+    document.addEventListener('contextmenu', (e) => {
+        let el = e.target.closest('.tile');
+        if (el) {
+            e.preventDefault(); // Block browser menu
+            let id = parseInt(el.dataset.id);
+            Tools.useSplit(id);
+        }
     });
 
     // -- SCREEN SHAKE --
