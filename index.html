@@ -1518,11 +1518,14 @@
         active: false,
         currentQuest: null,
         level: 1, 
+        questsCompleted: 0,
+        unlockedTier: 4, // Start lower so 7 is the first breakthrough
+        questsSinceBreakthrough: 0,
         
         boot: function() {
             this.active = true;
             let ui = document.getElementById('overseer-ui');
-            ui.style.display = 'block';
+            if(ui) ui.style.display = 'block';
             this.log("Connecting to Neural Net...");
             setTimeout(() => this.log("Connection Established."), 1000);
             setTimeout(() => this.generateQuest(), 2000);
@@ -1534,105 +1537,92 @@
 
         log: function(msg) {
             let el = document.getElementById('overseer-log');
-            el.innerHTML = `> ${msg}<span class="typing-cursor"></span>`;
+            if(el) el.innerHTML = `> ${msg}<span class="typing-cursor"></span><br>` + el.innerHTML.replace('<span class="typing-cursor"></span>', '');
+            if(el && el.innerHTML.length > 800) el.innerHTML = el.innerHTML.substring(0, 800);
         },
 
         generateQuest: function() {
-            // Level Logic
-            // Accelerate level slightly.
-            this.level = 1 + Math.floor(this.questsCompleted / 2);
+            this.level = 1 + Math.floor(this.questsCompleted / 3);
             
-            // Breakthrough every 3 quests.
-            // Allow quest 0 to be a breakthrough? 
-            // If unlockedTier is 7, we might want to ask for 14 immediately?
-            // "never reach the first Assemble isotope".
-            // Let's make the FIRST quest (0) a breakthrough to verify they can make 14.
-            // Then 1, 2 = Structure. 3 = Breakthrough (28).
+            // Dynamic Difficulty Ramp
+            // "Increase with level so you must solve multiple more when leveling up"
+            // Base gap: 3. Increases by 1 every 2 Tier upgrades? 
+            let gap = 3 + Math.floor(Math.log2(this.unlockedTier) - 2); 
+            // 4->Gap 3. 7->Gap 3. 14->Gap 4. 28->Gap 5. 56->Gap 6.
+            // Cap at 8 to avoid burnout.
+            gap = Math.min(8, gap);
+            
+            let isBreakthrough = false;
+            let targetVal = 0;
 
-            //i liek that youre adding comments here to actually do the right stuff.
-            //maybe really make the first level 1 or 0 to asemble isotope 7
-            //then 3 quests then isotope 14, and so on, but also make it increase with level so you must solve multiple more when leveling up until you get next breakthrough, 
-            //yea dont force to many is actually nto a bad call, amybe limit it to a maximum ceartain amount of quest in "endgame"
-            
-            let isBreakthrough = (this.questsCompleted % 3 === 0);
-            
-            // Safety: If unlockedTier is very high, maybe don't force too many?
-            // Let's stick to the cycle.
+            // SPECIAL START: Quest 0 is always Isotope 7.
+            if (this.questsCompleted === 0) {
+                 isBreakthrough = true;
+                 targetVal = 7;
+            } else if (this.questsSinceBreakthrough >= gap) {
+                 isBreakthrough = true;
+                 targetVal = (this.unlockedTier === 4) ? 7 : (this.unlockedTier * 2);
+            }
             
             if (isBreakthrough) {
-                // UNLOCK NEXT TIER
-                let nextTarget = this.unlockedTier * 2;
-                this.log(`BREAKTHROUGH REQUIRED: SYNTHESIZE [${nextTarget}]`);
-                
+                this.log(`BREAKTHROUGH REQUIRED. GAP EXCEEDED.`);
                 this.currentQuest = {
-                    text: `Synthesize Isotope [${nextTarget}]`,
-                    target: new TileData('pure', nextTarget, 0,0),
-                    rewardVal: nextTarget, // EXACT REWARD
+                    text: `Synthesize Isotope [${targetVal}]`,
+                    target: new TileData('pure', targetVal, 0,0),
+                    rewardVal: targetVal,
                     isBreakthrough: true
                 };
-                
             } else {
-                // Standard Structure Quest
-                // Scale complexity with level
-                let complexity = Math.min(3, 1 + Math.floor(this.level/3)); 
-                let struct = this.generateRandomStructure(complexity); 
+                // Structure Quest
+                // Use unlocked components.
+                let complexity = Math.min(3, 1 + Math.floor(this.level/2));
+                let struct = this.generateRandomStructure(complexity);
                 
-                // Determine Reward: Highest value in the structure
                 let maxVal = 7;
                 const scan = (t) => {
                     if (t.type === 'pure') maxVal = Math.max(maxVal, t.value);
                     if (t.parts) t.parts.forEach(scan);
                 };
                 scan(struct);
-                
-                // If the structure is wimpy, reward at least unlockedTier
                 maxVal = Math.max(maxVal, this.unlockedTier / 2);
 
-                this.log(`NEW OBJECTIVE: ASSEMBLE STRUCTURE`);
+                this.log(`New Blueprint Downloaded. Lv ${this.level}`);
                 this.currentQuest = {
                     text: "Assemble Specific Molecular Structure",
                     target: struct,
                     rewardVal: maxVal
                 };
             }
-
-            // Render Preview
+            
+            let qEl = document.getElementById('overseer-quest');
+            if(qEl) qEl.innerText = this.currentQuest.text;
             this.renderPreview(this.currentQuest.target);
-            document.getElementById('overseer-quest').innerText = this.currentQuest.text;
         },
         
         generateRandomStructure: function(depth) {
-            // SAFE GENERATION LOOP
-            let valid = false;
-            let parts = [];
-            let attempts = 0;
+            // POOL LOGIC
+            let pool = [1, 4];
+            if (this.unlockedTier >= 7) pool.push(7);
             
-            // POOL CONSTRUCTION based on Level
-            // As we level up, we want to see HIGHER numbers more often, and LOWER numbers less.
-            // Level 1: [1, 4, 7]
-            // Level 10: [4, 7, 14, 28] (Example)
-            
-            let pool = [1, 4, 7];
             let tier = 14;
             while (tier <= this.unlockedTier) {
                 pool.push(tier);
                 tier *= 2;
             }
             
-            // Filter Lows if high level
-            if (this.level > 5 && pool.length > 3) pool = pool.filter(x => x !== 1); // Remove 1s
-            if (this.level > 10 && pool.length > 3) pool = pool.filter(x => x !== 4); // Remove 4s
+            // Tune Pool (Filter weaklings at high level)
+            if (this.level > 5 && pool.length > 3) pool = pool.filter(x => x !== 1);
+            if (this.level > 10 && pool.length > 3) pool = pool.filter(x => x !== 4);
             
-            // WEIGHTED SELECTION Helper
-            // Bias towards the end of the array (Higher numbers)
             const pick = () => {
-                // Linear weight? or just random "max" bias?
-                // Let's try: Roll two dice, take higher index?
                 let idx1 = Math.floor(Math.random() * pool.length);
                 let idx2 = Math.floor(Math.random() * pool.length);
-                // Bias towards higher index (which are higher numbers)
                 return pool[Math.max(idx1, idx2)];
             };
+            
+            let valid = false;
+            let parts = [];
+            let attempts = 0;
             
             while(!valid && attempts < 50) {
                 valid = true;
@@ -1644,31 +1634,26 @@
                     if (depth > 0 && Math.random() > 0.7) {
                         parts.push(this.generateRandomStructure(depth - 1));
                     } else {
-                        let v = pick(); // Use weighted picker
+                        let v = pick();
                         parts.push(new TileData('pure', v, 0,0));
                         values.push(v);
                     }
                 }
                 
-                // VALIDATE THIS COMBINATION
+                // RULES
                 let counts = {};
                 values.forEach(v => counts[v] = (counts[v] || 0) + 1);
                 
-                // Check Rules
                 if ((counts[1] || 0) >= 3) valid = false;
                 if ((counts[3] || 0) >= 1 && (counts[1] || 0) >= 1) valid = false; 
                 if ((counts[4] || 0) >= 1 && (counts[3] || 0) >= 1) valid = false; 
-                
-                // Check Doubles >= 7 for ALL unlocked tiers
                 for (let v in counts) {
                     if (parseInt(v) >= 7 && counts[v] >= 2) valid = false;
                 }
-                
                 attempts++;
             }
             
             if (!valid) {
-                 // Safe fallback
                  return new TileData('container', [new TileData('pure', 4,0,0), new TileData('pure', 1,0,0)], 0, 0);
             }
             return new TileData('container', parts, 0, 0);
@@ -1676,8 +1661,13 @@
 
         renderPreview: function(targetTile) {
             let previewEl = document.getElementById('overseer-preview');
+            if(!previewEl) return;
             previewEl.innerHTML = '';
             let visual = createTileDOM(targetTile);
+            visual.style.position = 'relative';
+            visual.style.left = '0';
+            visual.style.top = '0';
+            visual.style.margin = '5px';
             previewEl.appendChild(visual);
         },
 
@@ -1698,41 +1688,60 @@
             if (tile.type === 'pure') return tile.value === target.value;
             
             // Container matching
-            if (tile.parts.length !== target.parts.length) return false;
-            
-            // Order doesn't matter for "Soup", but for "Structure" it might?
-            // "Exact Container" usually implies content match.
-            // Let's sort both by value/type signature to compare loosely ordered (Bag equality)
-            // Or strict? User said "Exact container".
-            // Let's go with Bag Equality (must contain same items, order irrelevant)
-            
-            let tileItems = [...tile.parts];
-            let targetItems = [...target.parts];
-            
-            // For each target item, find a match in tileItems and remove it
-            for (let tItem of targetItems) {
-                let matchIdx = tileItems.findIndex(p => this.compareStructure(p, tItem));
-                if (matchIdx === -1) return false; // Missing component
-                tileItems.splice(matchIdx, 1); // Consumed
+            if (tile.type === 'container') {
+                if (tile.parts.length !== target.parts.length) return false;
+                
+                // Order doesn't matter for "Soup", but for "Structure" it might?
+                // "Exact Container" usually implies content match.
+                // Let's sort both by value/type signature to compare loosely ordered (Bag equality)
+                // Or strict? User said "Exact container".
+                // Let's go with Bag Equality (must contain same items, order irrelevant)
+                
+                let tileItems = [...tile.parts];
+                let targetItems = [...target.parts];
+                
+                // For each target item, find a match in tileItems and remove it
+                for (let tItem of targetItems) {
+                    let matchIdx = tileItems.findIndex(p => this.compareStructure(p, tItem));
+                    if (matchIdx === -1) return false; // Missing component
+                    tileItems.splice(matchIdx, 1); // Consumed
+                }
+                
+                return true;
             }
-            
-            return true;
+            return false;
         },
 
         completeQuest: function() {
-            this.log("STRUCTURE MATCH CONFIRMED.");
-            document.getElementById('overseer-quest').innerHTML = `<span style="color:#0f0">SUCCESS</span>`;
+            this.log("OBJECTIVE COMPLETE."); // Less lengthy
+            let qEl = document.getElementById('overseer-quest');
+            if(qEl) qEl.innerHTML = `<span style="color:#0f0">SUCCESS</span>`;
             
             let previewEl = document.getElementById('overseer-preview');
-            previewEl.innerHTML = '<div style="color:#0f0; font-size:30px;">✓</div>';
+            if(previewEl) previewEl.innerHTML = '<div style="color:#0f0; font-size:30px;">✓</div>';
 
             spawnExplosion(window.innerWidth/2, window.innerHeight/2, '#0f0');
-            spawnTile(7); // Reward
+            
+            let reward = this.currentQuest.rewardVal || 7;
+            spawnTile(reward);
             
             // RECHARGE TOOLS
             // "get 3 splits... limit of 3... when reaching 112... +1 split on every order of magnitude"
             // For now: Cap at 3. Refill 3.
+            
+            if (this.currentQuest.isBreakthrough) {
+                if (reward > this.unlockedTier) {
+                    this.unlockedTier = reward;
+                    this.log(`TIER [${this.unlockedTier}] UNLOCKED.`);
+                    Tools.maxCharges++; 
+                }
+                this.questsSinceBreakthrough = 0; // Reset Gap
+            } else {
+                this.questsSinceBreakthrough++; // Increment Gap
+            }
+            
             Tools.addCharges(3);
+            this.questsCompleted++;
             
             this.currentQuest = null;
             setTimeout(() => this.generateQuest(), 3000); 
