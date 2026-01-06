@@ -1538,7 +1538,10 @@
         log: function(msg) {
             let el = document.getElementById('overseer-log');
             if(el) el.innerHTML = `> ${msg}<span class="typing-cursor"></span><br>` + el.innerHTML.replace('<span class="typing-cursor"></span>', '');
-            if(el && el.innerHTML.length > 800) el.innerHTML = el.innerHTML.substring(0, 800);
+            let lines = el.innerHTML.split('<br>');
+            if (lines.length > 6) {
+                el.innerHTML = lines.slice(0, 5).join('<br>') + '<br>';
+            }
         },
 
         generateQuest: function() {
@@ -1565,7 +1568,8 @@
             }
             
             if (isBreakthrough) {
-                this.log(`BREAKTHROUGH REQUIRED. GAP EXCEEDED.`);
+                this.log(`BREAKTHROUGH REQUIRED.`);
+                this.log(`GAP: ${gap}`);
                 this.currentQuest = {
                     text: `Synthesize Isotope [${targetVal}]`,
                     target: new TileData('pure', targetVal, 0,0),
@@ -1583,10 +1587,10 @@
                     if (t.type === 'pure') maxVal = Math.max(maxVal, t.value);
                     if (t.parts) t.parts.forEach(scan);
                 };
-                scan(struct);
+                // Reward scaling
                 maxVal = Math.max(maxVal, this.unlockedTier / 2);
 
-                this.log(`New Blueprint Downloaded. Lv ${this.level}`);
+                this.log(`New Blueprint. Sequence ${this.questsCompleted + 1}`);
                 this.currentQuest = {
                     text: "Assemble Specific Molecular Structure",
                     target: struct,
@@ -1594,6 +1598,7 @@
                 };
             }
             
+            // UI Update
             let qEl = document.getElementById('overseer-quest');
             if(qEl) qEl.innerText = this.currentQuest.text;
             this.renderPreview(this.currentQuest.target);
