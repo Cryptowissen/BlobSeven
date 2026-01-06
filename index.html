@@ -381,10 +381,10 @@
              // As capacity grows, spawn higher.
              // Cap at unlockedTier / 4 ? 
              // Example: Tier 112 -> Can spawn 28s? 
-             // Let's go tier / 8 to be safe grind logic. 112 -> 14. 
+             // Let's go tier / 4 to lessen grind. 112 -> 28. 28 -> 7.
              
              let maxT = (Overseer.unlockedTier || 7);
-             let cap = Math.max(1, maxT / 8); 
+             let cap = Math.max(1, maxT / 4); 
              // Candidate pools: 1, 4, 7... up to cap
              let pool = [1];
              if (cap >= 4) pool.push(4);
@@ -1545,20 +1545,16 @@
         },
 
         generateQuest: function() {
+            // Level Progression
             this.level = 1 + Math.floor(this.questsCompleted / 3);
             
-            // Dynamic Difficulty Ramp
-            // "Increase with level so you must solve multiple more when leveling up"
-            // Base gap: 3. Increases by 1 every 2 Tier upgrades? 
+            // Gap Calculation (User Spec)
             let gap = 3 + Math.floor(Math.log2(this.unlockedTier) - 2); 
-            // 4->Gap 3. 7->Gap 3. 14->Gap 4. 28->Gap 5. 56->Gap 6.
-            // Cap at 8 to avoid burnout.
             gap = Math.min(8, gap);
             
             let isBreakthrough = false;
             let targetVal = 0;
 
-            // SPECIAL START: Quest 0 is always Isotope 7.
             if (this.questsCompleted === 0) {
                  isBreakthrough = true;
                  targetVal = 7;
@@ -1569,7 +1565,7 @@
             
             if (isBreakthrough) {
                 this.log(`BREAKTHROUGH REQUIRED.`);
-                this.log(`GAP: ${gap}`);
+                this.log(`CLEARANCE CHECK STARTING...`);
                 this.currentQuest = {
                     text: `Synthesize Isotope [${targetVal}]`,
                     target: new TileData('pure', targetVal, 0,0),
@@ -1577,102 +1573,214 @@
                     isBreakthrough: true
                 };
             } else {
-                // Structure Quest
-                // Use unlocked components.
-                let complexity = Math.min(3, 1 + Math.floor(this.level/2));
-                let struct = this.generateRandomStructure(complexity);
+                // STRUCTURE QUEST - NEW PYRAMID LOGIC
+                // Size scales slowly: 3 atoms base + 1 per 2 levels.
+                // Sequence 7 -> Level 3 -> ~4 atoms. 
+                let targetSize = 3 + Math.floor(this.level * 0.7);
+                let struct = this.generateRandomStructure(targetSize);
                 
                 let maxVal = 7;
                 const scan = (t) => {
                     if (t.type === 'pure') maxVal = Math.max(maxVal, t.value);
                     if (t.parts) t.parts.forEach(scan);
                 };
-                // Reward scaling
-                maxVal = Math.max(maxVal, this.unlockedTier / 2);
+                scan(struct);
+                
+                // Reward: Half max value or at least 7
+                let r = Math.max(7, Math.floor(maxVal / 2));
+                if (r > 1 && r % 7 !== 0 && r % 4 !== 0 && r !== 1) {
+                     // Normalize reward to valid tile types if logic messes up
+                     // But pure tiles are usually 1,3,4,7,14...
+                }
 
                 this.log(`New Blueprint. Sequence ${this.questsCompleted + 1}`);
                 this.currentQuest = {
                     text: "Assemble Specific Molecular Structure",
                     target: struct,
-                    rewardVal: maxVal
+                    rewardVal: r
                 };
             }
             
-            // UI Update
             let qEl = document.getElementById('overseer-quest');
             if(qEl) qEl.innerText = this.currentQuest.text;
             this.renderPreview(this.currentQuest.target);
         },
         
-        generateRandomStructure: function(depth) {
-            // POOL LOGIC
-            let pool = [1, 4];
-            if (this.unlockedTier >= 7) pool.push(7);
+        generateRandomStructure: function(targetSize) {
+            // PHASE 1: GENERATE TREE SHAPE
+            // We create a container and split it randomly until we have roughly targetSize leaves.
+            // This ensures we control the complexity directly.
             
-            let tier = 14;
-            while (tier <= this.unlockedTier) {
-                pool.push(tier);
-                tier *= 2;
-            }
+            let root = { type: 'container', parts: [] };
+            let leaves = []; // We will track where we can add atoms
             
-            // Tune Pool (Filter weaklings at high level)
-            if (this.level > 5 && pool.length > 3) pool = pool.filter(x => x !== 1);
-            if (this.level > 10 && pool.length > 3) pool = pool.filter(x => x !== 4);
+            // Initialize with 2 slots
+            root.parts.push({ type: 'placeholder' });
+            root.parts.push({ type: 'placeholder' });
             
-            const pick = () => {
-                let idx1 = Math.floor(Math.random() * pool.length);
-                let idx2 = Math.floor(Math.random() * pool.length);
-                return pool[Math.max(idx1, idx2)];
+            // Expand until size reached
+            // Only counting leaves (placeholders)
+            let currentSize = 2;
+            
+            // Helper to find random placeholder
+            const getPlaceholder = (node) => {
+                if (node.type === 'placeholder') return [node];
+                if (node.type === 'container') {
+                    let list = [];
+                    node.parts.forEach(p => list = list.concat(getPlaceholder(p)));
+                    return list;
+                }
+                return [];
             };
             
-            let valid = false;
-            let parts = [];
-            let attempts = 0;
-            
-            while(!valid && attempts < 50) {
-                valid = true;
-                parts = [];
-                let count = 2 + Math.floor(Math.random() * 2);
-                let values = []; 
+            while (currentSize < targetSize) {
+                // Find a leaf to split or turn into container
+                let placeholders = getPlaceholder(root);
+                if (placeholders.length === 0) break;
                 
-                for(let i=0; i<count; i++) {
-                    if (depth > 0 && Math.random() > 0.7) {
-                        parts.push(this.generateRandomStructure(depth - 1));
-                    } else {
-                        let v = pick();
-                        parts.push(new TileData('pure', v, 0,0));
-                        values.push(v);
+                let target = placeholders[Math.floor(Math.random() * placeholders.length)];
+                
+                // 50% chance to just split this node (add sibling)
+                // 50% chance to deepen (make it a container) - only if depth not too deep?
+                // Let's keep it simple: Just nest or split?
+                // Actually, our data structure is a tree.
+                // 'placeholder' is a slot.
+                
+                // We want to turn 'placeholder' into a container with 2 placeholders
+                target.type = 'container';
+                target.parts = [{type: 'placeholder'}, {type: 'placeholder'}];
+                currentSize++; // We effectively added 1 node (1->2)
+            }
+            
+            // PHASE 2: ASSIGN VALUES (The Pyramid)
+            // Calculate Budget
+            // Max 1x of Highest. 2x of Highest-1. 4x of Highest-2...
+            let counts = {};
+            let t = this.unlockedTier;
+            let limit = 1;
+            
+            while (t >= 7) {
+                counts[t] = limit;
+                limit *= 2;
+                t /= 2;
+            }
+            // 4, 3, 1 are "filler" - high usage allowed
+            
+            // Create a "Deck" of available values based on Probability
+            // User: "start with simpler ones... later use more"
+            // We favor the small numbers for the bulk, but try to use our Budget for high numbers.
+            // Actually, we should just randomly pick, but REJECT if budget exceeded.
+            
+            let availableTiers = [1, 3, 4]; // Always available
+            let tempT = 7;
+            while(tempT <= this.unlockedTier) {
+                availableTiers.push(tempT);
+                tempT *= 2;
+            }
+            
+            // Fill the tree
+            const fill = (node) => {
+                if (node.type === 'container') {
+                    node.parts.forEach(fill);
+                } else if (node.type === 'placeholder') {
+                    // Turn into Pure
+                    node.type = 'pure';
+                    
+                    // Pick Value
+                    let picked = 1;
+                    let safeAttempts = 0;
+                    while(safeAttempts < 20) {
+                        // Weighted Random: Favor higher numbers slightly to ensure they appear?
+                        // Or User said "use LESS of them". "Random if you get one".
+                        // Let's pure random from available, then check budget.
+                        let candidate = availableTiers[Math.floor(Math.random() * availableTiers.length)];
+                        
+                        // Budget Check
+                        if (candidate >= 7) {
+                            if (counts[candidate] > 0) {
+                                // OK. Maybe use it?
+                                // Add Logic: "chance to include".
+                                // If I have 1x 28 budget, should I ALWAYS use it? No.
+                                // "It's random if you get one".
+                                if (Math.random() > 0.5) {
+                                    picked = candidate;
+                                    counts[candidate]--; 
+                                    break;
+                                }
+                            }
+                        } else {
+                            // 1, 3, 4 always ok
+                             picked = candidate;
+                             break;
+                        }
+                        safeAttempts++;
                     }
+                    node.value = picked;
+                    // Clean up temp props
+                    delete node.parts; 
                 }
-                
-                // RULES
-                let counts = {};
-                values.forEach(v => counts[v] = (counts[v] || 0) + 1);
-                
-                if ((counts[1] || 0) >= 3) valid = false;
-                if ((counts[3] || 0) >= 1 && (counts[1] || 0) >= 1) valid = false; 
-                if ((counts[4] || 0) >= 1 && (counts[3] || 0) >= 1) valid = false; 
-                for (let v in counts) {
-                    if (parseInt(v) >= 7 && counts[v] >= 2) valid = false;
-                }
-                attempts++;
-            }
+            };
             
-            if (!valid) {
-                 return new TileData('container', [new TileData('pure', 4,0,0), new TileData('pure', 1,0,0)], 0, 0);
-            }
-            return new TileData('container', parts, 0, 0);
+            fill(root);
+            
+            // Sanity Check: Ensure NO auto-merges in same container
+            // This is hard with pre-gen structure.
+            // Post-process: Check siblings. If X and X exist, mutate one.
+            const validate = (node) => {
+                if (node.type === 'container') {
+                     let vals = {};
+                     node.parts.forEach(p => {
+                         if(p.type === 'pure') vals[p.value] = (vals[p.value]||0)+1;
+                         if(p.type === 'container') validate(p);
+                     });
+                     
+                     // Direct conflict fix
+                     // If we have two 7s, change one to 4?
+                     // Or recursive fix.
+                     // Simple swap for now: If collision >= 7, downgrade.
+                     for(let p of node.parts) {
+                         if(p.type === 'pure' && p.value >= 7 && vals[p.value] > 1) {
+                             p.value = 4; // Downgrade to filler
+                             vals[p.value]--;
+                         }
+                         if(p.type === 'pure' && p.value === 1 && vals[1] >= 3) {
+                             p.value = 3; // 1->3
+                         }
+                     }
+                }
+            };
+            validate(root);
+            
+            return new TileData('container', root.parts, 0, 0);
         },
 
         renderPreview: function(targetTile) {
             let previewEl = document.getElementById('overseer-preview');
             if(!previewEl) return;
             previewEl.innerHTML = '';
+            
             let visual = createTileDOM(targetTile);
             visual.style.position = 'relative';
             visual.style.left = '0';
             visual.style.top = '0';
-            visual.style.margin = '5px';
+            visual.style.margin = '20px auto';
+            visual.style.transformOrigin = 'top center';
+            
+            // AUTO SCALE
+            // If it's deep, scale down.
+            // Base scale 0.8
+            let scale = 0.8;
+            // quick depth check
+            const getDepth = (t) => {
+                if(t.type !== 'container') return 0;
+                return 1 + Math.max(0, ...t.parts.map(getDepth));
+            };
+            let d = getDepth(targetTile);
+            if (d > 2) scale = 0.6;
+            if (d > 3) scale = 0.5;
+            
+            visual.style.transform = `scale(${scale})`;
+            
             previewEl.appendChild(visual);
         },
 
